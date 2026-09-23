@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 import pandas as pd
 import pdfplumber
 import streamlit as st
+import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
@@ -14,7 +15,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.0"
+VERSAO = "2.1"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -1448,6 +1449,7 @@ elif pagina == "💰 Faturamento":
     atividades = st.session_state.get("atividades_relatorio", pd.DataFrame())
     competencia = st.session_state.get("competencia_faturamento", "")
     municipio = st.session_state.get("municipio_relatorio", "")
+    responsavel = st.session_state.get("responsavel_relatorio", "")
 
     if dados is None or dados.empty:
         st.info("Primeiro envie e analise um relatório em 📤 Novo relatório.")
@@ -1476,105 +1478,132 @@ elif pagina == "💰 Faturamento":
             "Nº PROF. MÉDICOS usa CRMs únicos."
         )
 
-        st.subheader("📎 Planilha oficial de faturamento")
+        # ----------------------------------------------------
+        # CONEXÃO COM GOOGLE PLANILHAS VIA APPS SCRIPT
+        # ----------------------------------------------------
+        try:
+            apps_script_url = st.secrets["apps_script"]["url"]
+            apps_script_chave = st.secrets["apps_script"]["chave"]
+            configurado = True
+        except Exception:
+            apps_script_url = ""
+            apps_script_chave = ""
+            configurado = False
 
-        arquivo_faturamento = st.file_uploader(
-            "Envie a planilha FATURAMENTO DE PLANTÕES 2026.xlsx",
-            type=["xlsx"],
-            key="arquivo_faturamento"
-        )
+        st.subheader("☁️ Planilha oficial no Google Drive")
 
-        if arquivo_faturamento is not None:
-            try:
-                faturamento_bytes = arquivo_faturamento.getvalue()
-                bloco = localizar_bloco_mes_planilha(faturamento_bytes, competencia)
-                opcoes = [nome for _, nome in bloco["entidades"]]
-                sugestao = sugerir_entidade_faturamento(opcoes and bloco["entidades"] or [], municipio)
-                indice = opcoes.index(sugestao) if sugestao in opcoes else 0
+        if not configurado:
+            st.error(
+                "A conexão com a planilha oficial ainda não está configurada nos Secrets do Streamlit."
+            )
+            st.code(
+                '[apps_script]\nurl = "COLE_A_URL_DO_WEB_APP_AQUI"\nchave = "COLE_A_MESMA_CHAVE_API_DO_APPS_SCRIPT_AQUI"'
+            )
+        else:
+            st.success("✅ Conexão do Apps Script configurada no servidor.")
 
-                entidade = st.selectbox(
-                    "Linha que receberá o faturamento",
-                    options=opcoes,
-                    index=indice
+            def chamar_apps_script(acao, confirmar_substituicao=False):
+                payload = {
+                    "chave": apps_script_chave,
+                    "acao": acao,
+                    "competencia": competencia,
+                    "municipio": municipio,
+                    "responsavel": responsavel,
+                    "valor_total": resumo["Valor total"],
+                    "plantoes": resumo["Plantoes"],
+                    "consultas": resumo["Consultas faturamento"],
+                    "horas": resumo["Horas"],
+                    "quant_mes": resumo["Meses"],
+                    "pacotes": resumo["Pacotes"],
+                    "quant_dia": resumo["Dias"],
+                    "profissionais": resumo["Profissionais"],
+                    "confirmar_substituicao": confirmar_substituicao,
+                }
+
+                resposta = requests.post(
+                    apps_script_url,
+                    json=payload,
+                    timeout=45,
+                    allow_redirects=True,
                 )
+                resposta.raise_for_status()
 
-                atual = ler_linha_atual_faturamento(
-                    faturamento_bytes,
-                    competencia,
-                    entidade
-                )
-
-                existe_dado = any(
-                    converter_numero(atual.get(campo, 0)) != 0
-                    for campo in [
-                        "Valor total atual", "Plantões atuais", "Consultas atuais",
-                        "Horas atuais", "Meses atuais", "Pacotes atuais",
-                        "Dias atuais", "Profissionais atuais"
-                    ]
-                )
-
-                with st.expander("Ver o que já existe nessa linha"):
-                    st.write(atual)
-
-                if existe_dado:
-                    st.warning(
-                        "⚠️ Essa linha já possui dados. O sistema só substituirá os valores "
-                        "se você marcar a confirmação abaixo."
+                try:
+                    return resposta.json()
+                except Exception:
+                    raise RuntimeError(
+                        "O Apps Script respondeu, mas não retornou JSON válido. "
+                        "Confira se a implantação está ativa e se a URL termina em /exec."
                     )
-                    confirmar_substituicao = st.checkbox(
-                        "Confirmo que desejo substituir os dados existentes desta linha",
-                        value=False
-                    )
+
+            if st.button("🔎 Conferir linha na planilha oficial"):
+                try:
+                    with st.spinner("Consultando a planilha oficial..."):
+                        previa = chamar_apps_script("previsualizar")
+                    st.session_state["previa_faturamento_drive"] = previa
+                except Exception as erro:
+                    st.error("Não consegui consultar a planilha oficial.")
+                    with st.expander("Ver detalhes do erro"):
+                        st.code(str(erro))
+
+            previa = st.session_state.get("previa_faturamento_drive")
+
+            if previa:
+                if not previa.get("sucesso", False):
+                    st.error(previa.get("mensagem", "O Apps Script retornou um erro."))
                 else:
-                    confirmar_substituicao = True
-                    st.success("✅ A linha selecionada está sem faturamento lançado.")
+                    st.write("**Linha encontrada:**", previa.get("linha", "—"))
+                    st.write("**Mês identificado:**", previa.get("mes", "—"))
+                    st.write("**Município identificado:**", previa.get("municipio", municipio))
 
-                aplicar_calculos = st.checkbox(
-                    "Aplicar automaticamente os cálculos financeiros das colunas D a J",
-                    value=True,
-                    help=(
-                        "Usa o padrão atual da planilha: D=98,5% do total; E=1%; "
-                        "F=96,5%; G=3,5% de F; H=1,5% de F; I=F-G-H; J=G+H."
-                    )
-                )
+                    dados_existentes = previa.get("dados_existentes", {}) or {}
+                    ja_possui_dados = bool(previa.get("ja_possui_dados", False))
 
-                st.info(
-                    "O sistema gera uma NOVA cópia da planilha para download. "
-                    "O arquivo que você enviou não é alterado no seu computador."
-                )
+                    with st.expander("Ver dados que já existem nessa linha"):
+                        st.json(dados_existentes)
 
-                if st.button("💰 Gerar planilha de faturamento", type="primary"):
-                    if not confirmar_substituicao:
-                        st.error("Marque a confirmação antes de substituir uma linha que já possui dados.")
+                    if ja_possui_dados:
+                        st.warning(
+                            "⚠️ Essa linha já possui dados. O lançamento só será feito se você confirmar a substituição."
+                        )
+                        confirmar = st.checkbox(
+                            "Confirmo que desejo substituir os dados existentes desta linha",
+                            key="confirmar_substituicao_drive",
+                        )
                     else:
-                        arquivo_pronto, linha_gravada = gerar_planilha_faturamento(
-                            faturamento_bytes,
-                            competencia,
-                            entidade,
-                            resumo,
-                            aplicar_calculos
-                        )
+                        st.success("✅ A linha encontrada está sem faturamento lançado.")
+                        confirmar = True
 
-                        nome_saida = (
-                            f"FATURAMENTO_ATUALIZADO_{competencia.replace('/', '-')}_"
-                            f"{normalizar_texto(entidade).replace(' ', '_').upper()}.xlsx"
-                        )
+                    st.info(
+                        "Ao lançar, o Apps Script cria um backup da planilha, registra o histórico "
+                        "e depois atualiza a linha oficial."
+                    )
 
-                        st.success(
-                            f"✅ Faturamento preparado na linha {linha_gravada} - {entidade}."
-                        )
+                    if st.button("💾 LANÇAR NA PLANILHA OFICIAL", type="primary"):
+                        if not confirmar:
+                            st.error("Marque a confirmação antes de substituir dados existentes.")
+                        else:
+                            try:
+                                with st.spinner("Criando backup e lançando no Google Drive..."):
+                                    resultado = chamar_apps_script(
+                                        "lancar",
+                                        confirmar_substituicao=bool(confirmar),
+                                    )
 
-                        st.download_button(
-                            "⬇️ Baixar planilha atualizada",
-                            data=arquivo_pronto,
-                            file_name=nome_saida,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                                if resultado.get("sucesso", False):
+                                    st.success("✅ Faturamento lançado com sucesso na planilha oficial.")
+                                    st.write("**Competência:**", resultado.get("competencia", competencia))
+                                    st.write("**Município:**", resultado.get("municipio", municipio))
+                                    st.write("**Linha atualizada:**", resultado.get("linha", "—"))
 
-            except Exception as erro:
-                st.error("Não consegui preparar a planilha de faturamento.")
-                with st.expander("Ver detalhes do erro"):
-                    st.code(str(erro))
+                                    st.session_state.pop("previa_faturamento_drive", None)
+                                else:
+                                    st.error(resultado.get("mensagem", "O lançamento não foi concluído."))
+
+                            except Exception as erro:
+                                st.error("Não consegui lançar na planilha oficial.")
+                                with st.expander("Ver detalhes do erro"):
+                                    st.code(str(erro))
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
