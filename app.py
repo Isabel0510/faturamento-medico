@@ -3,44 +3,31 @@
 SISTEMA DE VALIDAÇÃO E FATURAMENTO MÉDICO
 ============================================================
 
-Versão: 1.3
+Versão: 1.4
 Linguagem: Python
 Interface: Streamlit
 
 OBJETIVO:
-Auxiliar na leitura, conferência, validação
-e faturamento de relatórios de serviços médicos.
+Auxiliar na leitura, conferência, validação e faturamento
+de relatórios de serviços médicos.
 
 REGRAS IMPLEMENTADAS NESTA VERSÃO:
-
 - Identificação de uma ou duas competências.
 - Faturamento integral no mês inicial do período.
 - Leitura de profissionais e CRM.
 - Contagem de profissionais únicos pelo CRM.
 - Identificação de múltiplos lançamentos do mesmo CRM.
-- Leitura inicial de:
-    plantões
-    consultas
-    procedimentos
-    exames
-    interconsultas
-    pacotes
-    horas
-    valores
+- Leitura de plantões, consultas, procedimentos, exames,
+  interconsultas, pacotes, horas e valores.
+- Suporte a cabeçalhos em várias linhas, como no modelo FHEMIG.
 - Consultas para faturamento =
   consultas + procedimentos + exames + interconsultas.
 ============================================================
 """
 
-
-# ============================================================
-# BLOCO 1 - BIBLIOTECAS
-# ============================================================
-
 import io
 import re
 import unicodedata
-
 from datetime import date
 
 import pandas as pd
@@ -48,32 +35,24 @@ import streamlit as st
 
 
 # ============================================================
-# BLOCO 2 - CONFIGURAÇÕES GERAIS
+# BLOCO 1 - CONFIGURAÇÕES GERAIS
 # ============================================================
 
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
+VERSAO = "1.4"
 
-VERSAO = "1.3"
+st.set_page_config(
+    page_title=NOME_SISTEMA,
+    page_icon="📊",
+    layout="wide"
+)
 
 
 # ============================================================
-# BLOCO 3 - NORMALIZAÇÃO DE TEXTOS
+# BLOCO 2 - NORMALIZAÇÃO DE TEXTOS
 # ============================================================
 
 def normalizar_texto(valor):
-
-    """
-    Padroniza textos para facilitar comparações.
-
-    Exemplo:
-
-    "QUANT. DE HORA"
-           ↓
-    "quant de hora"
-
-    Isso facilita a identificação de cabeçalhos
-    escritos de formas diferentes.
-    """
 
     if valor is None:
         return ""
@@ -83,7 +62,6 @@ def normalizar_texto(valor):
 
     texto = str(valor).strip().lower()
 
-    # Remove acentos.
     texto = unicodedata.normalize(
         "NFKD",
         texto
@@ -94,14 +72,12 @@ def normalizar_texto(valor):
         "ignore"
     ).decode("ascii")
 
-    # Substitui pontuação por espaços.
     texto = re.sub(
         r"[^a-z0-9]+",
         " ",
         texto
     )
 
-    # Remove espaços duplicados.
     texto = re.sub(
         r"\s+",
         " ",
@@ -112,20 +88,10 @@ def normalizar_texto(valor):
 
 
 # ============================================================
-# BLOCO 4 - TRATAMENTO DE CRM
+# BLOCO 3 - TRATAMENTO DE CRM
 # ============================================================
 
 def limpar_crm(valor):
-
-    """
-    Deixa o CRM em um formato mais simples.
-
-    Exemplo:
-
-    45576.0
-       ↓
-    45576
-    """
 
     if valor is None:
         return ""
@@ -136,9 +102,14 @@ def limpar_crm(valor):
     if isinstance(valor, (int, float)):
 
         if float(valor).is_integer():
-            return str(int(valor))
 
-    texto = str(valor).strip()
+            return str(
+                int(valor)
+            )
+
+    texto = str(
+        valor
+    ).strip()
 
     if re.fullmatch(
         r"\d+\.0",
@@ -152,66 +123,45 @@ def limpar_crm(valor):
 
 def chave_crm(valor):
 
-    """
-    Cria uma identificação interna do CRM.
-
-    Exemplo:
-
-    CRM 45576
-    45.576
-    45576
-
-    passam a ter a mesma identificação:
-    45576
-    """
-
-    crm = limpar_crm(
-        valor
-    )
-
-    numeros = re.sub(
+    return re.sub(
         r"\D",
         "",
-        crm
+        limpar_crm(valor)
     )
-
-    return numeros
 
 
 def crm_valido(valor):
-
-    """
-    Verifica se o conteúdo parece realmente um CRM.
-    """
 
     numeros = chave_crm(
         valor
     )
 
     return (
-        4 <= len(numeros) <= 10
+        4
+        <= len(numeros)
+        <= 10
     )
 
 
 # ============================================================
-# BLOCO 5 - VALIDAÇÃO DO PROFISSIONAL
+# BLOCO 4 - VALIDAÇÃO DO PROFISSIONAL
 # ============================================================
 
-def profissional_valido(nome, crm):
-
-    """
-    Impede que cabeçalhos, SOMA, TOTAL etc.
-    sejam contados como médicos.
-    """
+def profissional_valido(
+    nome,
+    crm
+):
 
     nome_normalizado = normalizar_texto(
         nome
     )
 
     if not nome_normalizado:
+
         return False
 
     if len(nome_normalizado) < 4:
+
         return False
 
 
@@ -242,13 +192,14 @@ def profissional_valido(nome, crm):
     for palavra in palavras_invalidas:
 
         if nome_normalizado.startswith(
-            normalizar_texto(palavra)
+            normalizar_texto(
+                palavra
+            )
         ):
 
             return False
 
 
-    # O nome deve possuir letras.
     if not re.search(
         r"[a-z]",
         nome_normalizado
@@ -257,7 +208,6 @@ def profissional_valido(nome, crm):
         return False
 
 
-    # Também deve possuir CRM válido.
     if not crm_valido(
         crm
     ):
@@ -269,18 +219,12 @@ def profissional_valido(nome, crm):
 
 
 # ============================================================
-# BLOCO 6 - IDENTIFICAÇÃO DO CABEÇALHO
+# BLOCO 5 - IDENTIFICAÇÃO DO CABEÇALHO PRINCIPAL
 # ============================================================
 
-def linha_e_cabecalho(linha):
-
-    """
-    Procura uma linha que contenha:
-
-    PROFISSIONAL
-    +
-    CRM
-    """
+def linha_e_cabecalho(
+    linha
+):
 
     encontrou_profissional = False
 
@@ -301,7 +245,9 @@ def linha_e_cabecalho(linha):
 
         if (
             texto == "crm"
-            or texto.startswith("crm ")
+            or texto.startswith(
+                "crm "
+            )
         ):
 
             encontrou_crm = True
@@ -313,22 +259,17 @@ def linha_e_cabecalho(linha):
     )
 
 
-def localizar_coluna_profissional(linha):
-
-    """
-    Descobre em qual coluna está
-    o nome do profissional.
-    """
+def localizar_coluna_profissional(
+    linha
+):
 
     for numero_coluna, valor in enumerate(
         linha
     ):
 
-        texto = normalizar_texto(
+        if "profission" in normalizar_texto(
             valor
-        )
-
-        if "profission" in texto:
+        ):
 
             return numero_coluna
 
@@ -336,11 +277,9 @@ def localizar_coluna_profissional(linha):
     return None
 
 
-def localizar_coluna_crm(linha):
-
-    """
-    Descobre em qual coluna está o CRM.
-    """
+def localizar_coluna_crm(
+    linha
+):
 
     for numero_coluna, valor in enumerate(
         linha
@@ -353,7 +292,9 @@ def localizar_coluna_crm(linha):
 
         if (
             texto == "crm"
-            or texto.startswith("crm ")
+            or texto.startswith(
+                "crm "
+            )
         ):
 
             return numero_coluna
@@ -363,246 +304,123 @@ def localizar_coluna_crm(linha):
 
 
 # ============================================================
-# BLOCO 7 - NOMES POSSÍVEIS DAS COLUNAS DE PRODUÇÃO
+# BLOCO 6 - CONVERSÃO DE NÚMEROS
 # ============================================================
 
-CAMPOS_PRODUCAO = {
-
-    "Plantoes": [
-
-        "plantao",
-
-        "plantoes",
-
-        "quant plantao",
-
-        "quant de plantao",
-
-        "qtd plantao"
-    ],
-
-
-    "Consultas": [
-
-        "consulta",
-
-        "consultas",
-
-        "quant consulta",
-
-        "quant de consulta",
-
-        "qtd consulta"
-    ],
-
-
-    "Procedimentos": [
-
-        "procedimento",
-
-        "procedimentos",
-
-        "quant procedimento",
-
-        "quant de procedimento",
-
-        "qtd procedimento"
-    ],
-
-
-    "Exames": [
-
-        "exame",
-
-        "exames",
-
-        "quant exame",
-
-        "quant de exame",
-
-        "qtd exame"
-    ],
-
-
-    "Interconsultas": [
-
-        "interconsulta",
-
-        "interconsultas",
-
-        "quant interconsulta",
-
-        "quant de interconsulta",
-
-        "qtd interconsulta"
-    ],
-
-
-    "Pacotes": [
-
-        "pacote",
-
-        "pacotes",
-
-        "pacote consulta",
-
-        "pacote de consulta",
-
-        "quant pacote",
-
-        "qtd pacote"
-    ],
-
-
-    "Horas": [
-
-        "hora",
-
-        "horas",
-
-        "quant hora",
-
-        "quant de hora",
-
-        "quantidade de hora",
-
-        "qtd hora",
-
-        "carga horaria"
-    ],
-
-
-    "Valor unitario": [
-
-        "valor unitario",
-
-        "valor da hora",
-
-        "valor hora",
-
-        "valor consulta",
-
-        "valor procedimento",
-
-        "valor do procedimento"
-    ],
-
-
-    "Valor total": [
-
-        "valor total",
-
-        "valor total final",
-
-        "total bruto",
-
-        "valor bruto",
-
-        "valor a pagar"
-    ]
-}
-
-
-# ============================================================
-# BLOCO 8 - LOCALIZAÇÃO DAS COLUNAS DE PRODUÇÃO
-# ============================================================
-
-def localizar_coluna_por_nomes(
-    linha,
-    nomes
+def converter_numero(
+    valor
 ):
 
-    """
-    Procura uma coluna utilizando
-    vários nomes possíveis.
-    """
+    if valor is None:
 
-    textos = [
+        return 0.0
 
-        normalizar_texto(
+
+    if isinstance(
+        valor,
+        float
+    ):
+
+        if pd.isna(
+            valor
+        ):
+
+            return 0.0
+
+
+    if isinstance(
+        valor,
+        (int, float)
+    ):
+
+        return float(
             valor
         )
 
-        for valor in linha
-    ]
+
+    texto = str(
+        valor
+    ).strip()
 
 
-    nomes_normalizados = [
+    if texto == "":
 
-        normalizar_texto(
-            nome
+        return 0.0
+
+
+    texto = texto.replace(
+        "R$",
+        ""
+    )
+
+    texto = texto.replace(
+        " ",
+        ""
+    )
+
+
+    if "," in texto:
+
+        texto = texto.replace(
+            ".",
+            ""
         )
 
-        for nome in nomes
-    ]
+        texto = texto.replace(
+            ",",
+            "."
+        )
 
 
-    # Primeiro procura correspondência EXATA.
-    for numero_coluna, texto in enumerate(
-        textos
-    ):
+    try:
 
-        for nome in nomes_normalizados:
+        return float(
+            texto
+        )
 
-            if texto == nome:
+    except:
 
-                return numero_coluna
-
-
-    # Se não encontrar, procura correspondência parcial.
-    for numero_coluna, texto in enumerate(
-        textos
-    ):
-
-        for nome in nomes_normalizados:
-
-            if (
-                len(nome) >= 5
-                and nome in texto
-            ):
-
-                return numero_coluna
+        return 0.0
 
 
-    return None
-
+# ============================================================
+# BLOCO 7 - IDENTIFICAÇÃO MULTILINHA DA PRODUÇÃO
+# ============================================================
 
 def localizar_colunas_producao_multilinha(
     planilha,
     linha_cabecalho
 ):
 
-    """
-    Procura os dados de produção em várias linhas
-    abaixo do cabeçalho principal.
-
-    Isso é necessário porque algumas planilhas,
-    como a da FHEMIG, possuem:
-
-    linha 1 -> PROFISSIONAIS / CRM / especialidades
-    linha 2 -> códigos
-    linha 3 -> QUANT. DE HORA / VALOR DA HORA
-    """
-
     resultado = {
 
         "Plantoes": [],
+
         "Consultas": [],
+
         "Procedimentos": [],
+
         "Exames": [],
+
         "Interconsultas": [],
+
         "Pacotes": [],
+
         "Horas": [],
 
         "Valor unitario": [],
+
         "Valor total": []
     }
 
 
-    # Vamos observar o cabeçalho principal
-    # e as quatro linhas seguintes.
+    # Analisa o cabeçalho e algumas linhas logo abaixo.
+    # Isso resolve casos como a FHEMIG.
+
     linha_final = min(
-        linha_cabecalho + 5,
+
+        linha_cabecalho + 6,
+
         len(planilha)
     )
 
@@ -611,36 +429,57 @@ def localizar_colunas_producao_multilinha(
         planilha.shape[1]
     ):
 
+
         textos_coluna = []
 
 
         for numero_linha in range(
+
             linha_cabecalho,
+
             linha_final
         ):
 
+
             valor = planilha.iat[
+
                 numero_linha,
+
                 numero_coluna
             ]
 
+
             textos_coluna.append(
-                normalizar_texto(valor)
+
+                normalizar_texto(
+                    valor
+                )
             )
 
 
         for texto in textos_coluna:
 
 
-            # -----------------------------
+            if not texto:
+
+                continue
+
+
+            # --------------------------------------------
             # HORAS
-            # -----------------------------
+            # --------------------------------------------
 
             if (
+
                 "quant de hora" in texto
+
                 or "quantidade de hora" in texto
+
                 or "qtd hora" in texto
+
+                or texto == "horas"
             ):
+
 
                 resultado[
                     "Horas"
@@ -649,15 +488,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # PLANTÕES
-            # -----------------------------
+            # --------------------------------------------
 
             if (
+
                 "quant de plantao" in texto
+
                 or "quant plantao" in texto
+
                 or "qtd plantao" in texto
+
+                or texto == "plantoes"
             ):
+
 
                 resultado[
                     "Plantoes"
@@ -666,15 +511,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # CONSULTAS
-            # -----------------------------
+            # --------------------------------------------
 
             if (
+
                 "quant de consulta" in texto
+
                 or "quant consulta" in texto
+
                 or "qtd consulta" in texto
+
+                or texto == "consultas"
             ):
+
 
                 resultado[
                     "Consultas"
@@ -683,15 +534,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # PROCEDIMENTOS
-            # -----------------------------
+            # --------------------------------------------
 
             if (
-                "quant procedimento" in texto
-                or "quant de procedimento" in texto
+
+                "quant de procedimento" in texto
+
+                or "quant procedimento" in texto
+
                 or "qtd procedimento" in texto
+
+                or texto == "procedimentos"
             ):
+
 
                 resultado[
                     "Procedimentos"
@@ -700,15 +557,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # EXAMES
-            # -----------------------------
+            # --------------------------------------------
 
             if (
-                "quant exame" in texto
-                or "quant de exame" in texto
+
+                "quant de exame" in texto
+
+                or "quant exame" in texto
+
                 or "qtd exame" in texto
+
+                or texto == "exames"
             ):
+
 
                 resultado[
                     "Exames"
@@ -717,15 +580,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # INTERCONSULTAS
-            # -----------------------------
+            # --------------------------------------------
 
             if (
-                "quant interconsulta" in texto
-                or "quant de interconsulta" in texto
+
+                "quant de interconsulta" in texto
+
+                or "quant interconsulta" in texto
+
                 or "qtd interconsulta" in texto
+
+                or texto == "interconsultas"
             ):
+
 
                 resultado[
                     "Interconsultas"
@@ -734,15 +603,23 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # PACOTES
-            # -----------------------------
+            # --------------------------------------------
 
             if (
-                "quant pacote" in texto
+
+                "quant de pacote" in texto
+
+                or "quant pacote" in texto
+
                 or "qtd pacote" in texto
+
                 or "pacote de consulta" in texto
+
+                or texto == "pacotes"
             ):
+
 
                 resultado[
                     "Pacotes"
@@ -751,16 +628,21 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # VALOR UNITÁRIO
-            # -----------------------------
+            # --------------------------------------------
 
             if (
+
                 "valor da hora" in texto
+
                 or "valor unitario" in texto
+
                 or "valor consulta" in texto
+
                 or "valor procedimento" in texto
             ):
+
 
                 resultado[
                     "Valor unitario"
@@ -769,14 +651,17 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # -----------------------------
+            # --------------------------------------------
             # VALOR TOTAL
-            # -----------------------------
+            # --------------------------------------------
 
             if (
+
                 texto == "valor total"
+
                 or "valor total final" in texto
             ):
+
 
                 resultado[
                     "Valor total"
@@ -786,10 +671,14 @@ def localizar_colunas_producao_multilinha(
 
 
     # Remove colunas repetidas.
+
     for campo in resultado:
 
+
         resultado[campo] = list(
+
             dict.fromkeys(
+
                 resultado[campo]
             )
         )
@@ -799,24 +688,18 @@ def localizar_colunas_producao_multilinha(
 
 
 # ============================================================
-# BLOCO 10 - LEITURA DE UMA ABA
+# BLOCO 8 - LEITURA DE UMA ABA
 # ============================================================
 
 def ler_profissionais_da_aba(
+
     arquivo_bytes,
+
     nome_arquivo,
+
     nome_aba
 ):
 
-    """
-    Abre uma aba do Excel e procura
-    blocos contendo:
-
-    PROFISSIONAL + CRM
-
-    Depois coleta os profissionais
-    e os dados de produção.
-    """
 
     planilha = pd.read_excel(
 
@@ -834,6 +717,7 @@ def ler_profissionais_da_aba(
 
     if planilha.empty:
 
+
         return (
 
             pd.DataFrame(),
@@ -849,6 +733,9 @@ def ler_profissionais_da_aba(
                 "Lançamentos válidos":
                     0,
 
+                "Colunas de horas":
+                    0,
+
                 "Situação":
                     "Aba vazia"
             }
@@ -856,7 +743,7 @@ def ler_profissionais_da_aba(
 
 
     # --------------------------------------------------------
-    # LOCALIZAR TODOS OS CABEÇALHOS
+    # PROCURAR CABEÇALHOS
     # --------------------------------------------------------
 
     cabecalhos = []
@@ -865,6 +752,7 @@ def ler_profissionais_da_aba(
     for numero_linha in range(
         len(planilha)
     ):
+
 
         linha = planilha.iloc[
             numero_linha
@@ -875,12 +763,15 @@ def ler_profissionais_da_aba(
             linha
         ):
 
+
             cabecalhos.append(
                 numero_linha
             )
 
 
     registros = []
+
+    colunas_horas_encontradas = set()
 
 
     # --------------------------------------------------------
@@ -890,6 +781,7 @@ def ler_profissionais_da_aba(
     for posicao, linha_cabecalho in enumerate(
         cabecalhos
     ):
+
 
         cabecalho = planilha.iloc[
             linha_cabecalho
@@ -907,26 +799,40 @@ def ler_profissionais_da_aba(
 
 
         colunas_producao = localizar_colunas_producao_multilinha(
+
             planilha,
+
             linha_cabecalho
         )
 
 
+        colunas_horas_encontradas.update(
+
+            colunas_producao[
+                "Horas"
+            ]
+        )
+
+
         if (
+
             coluna_profissional is None
+
             or coluna_crm is None
         ):
+
 
             continue
 
 
         # ----------------------------------------------------
-        # DEFINIR ONDE O BLOCO TERMINA
+        # FIM DO BLOCO
         # ----------------------------------------------------
 
         if posicao + 1 < len(
             cabecalhos
         ):
+
 
             linha_final = cabecalhos[
                 posicao + 1
@@ -935,13 +841,14 @@ def ler_profissionais_da_aba(
 
         else:
 
+
             linha_final = len(
                 planilha
             )
 
 
         # ----------------------------------------------------
-        # LER AS LINHAS DE PROFISSIONAIS
+        # LER PROFISSIONAIS
         # ----------------------------------------------------
 
         for numero_linha in range(
@@ -973,266 +880,161 @@ def ler_profissionais_da_aba(
                 crm
             ):
 
+
                 continue
 
 
             # ------------------------------------------------
-            # PRODUÇÃO DA LINHA
+            # PRODUÇÃO
             # ------------------------------------------------
 
             producao = {}
 
 
-        producao = {}
+            # Quantidades: soma todas as colunas encontradas.
+
+            for campo in [
+
+                "Plantoes",
+
+                "Consultas",
+
+                "Procedimentos",
+
+                "Exames",
+
+                "Interconsultas",
+
+                "Pacotes",
+
+                "Horas"
+            ]:
 
 
-for campo, colunas in colunas_producao.items():
+                total_campo = 0.0
 
 
-    # ------------------------------------
-    # CAMPOS DE QUANTIDADE
-    # ------------------------------------
-
-    if campo in [
-
-        "Plantoes",
-        "Consultas",
-        "Procedimentos",
-        "Exames",
-        "Interconsultas",
-        "Pacotes",
-        "Horas"
-    ]:
-
-
-        total_campo = 0
-
-
-        for numero_coluna in colunas:
-
-            valor = planilha.iat[
-                numero_linha,
-                numero_coluna
-            ]
-
-
-            total_campo += converter_numero(
-                valor
-            )
-
-
-        producao[
-            campo
-        ] = total_campo
-
-
-    # ------------------------------------
-    # VALOR UNITÁRIO
-    # ------------------------------------
-
-    elif campo == "Valor unitario":
-
-
-        valor_encontrado = 0
-
-
-        for numero_coluna in colunas:
-
-            valor = converter_numero(
-
-                planilha.iat[
-                    numero_linha,
-                    numero_coluna
-                ]
-            )
-
-
-            if valor != 0:
-
-                valor_encontrado = valor
-
-                break
-
-
-        producao[
-            campo
-        ] = valor_encontrado
-
-
-    # ------------------------------------
-    # VALOR TOTAL
-    # ------------------------------------
-
-    elif campo == "Valor total":
-
-
-        valor_encontrado = 0
-
-
-        for numero_coluna in colunas:
-
-            valor = converter_numero(
-
-                planilha.iat[
-                    numero_linha,
-                    numero_coluna
-                ]
-            )
-
-
-            if valor != 0:
-
-                valor_encontrado = valor
-
-                break
-
-
-        producao[
-            campo
-        ] = valor_encontrado
-
-
-            # ------------------------------------------------
-            # REGISTRO FINAL
-            # ------------------------------------------------
-
-                  # ----------------------------------------------------
-        # LER AS LINHAS DE PROFISSIONAIS
-        # ----------------------------------------------------
-
-        for numero_linha in range(
-            linha_cabecalho + 1,
-            linha_final
-        ):
-
-            nome = planilha.iat[
-                numero_linha,
-                coluna_profissional
-            ]
-
-            crm = planilha.iat[
-                numero_linha,
-                coluna_crm
-            ]
-
-            # Verifica se a linha realmente representa
-            # um profissional válido.
-            if not profissional_valido(
-                nome,
-                crm
-            ):
-                continue
-
-
-            # ------------------------------------------------
-            # PRODUÇÃO DA LINHA
-            # ------------------------------------------------
-
-            producao = {}
-
-            for campo, colunas in colunas_producao.items():
-
-                # --------------------------------------------
-                # CAMPOS DE QUANTIDADE
-                # --------------------------------------------
-
-                if campo in [
-                    "Plantoes",
-                    "Consultas",
-                    "Procedimentos",
-                    "Exames",
-                    "Interconsultas",
-                    "Pacotes",
-                    "Horas"
+                for numero_coluna in colunas_producao[
+                    campo
                 ]:
 
-                    total_campo = 0
 
-                    for numero_coluna in colunas:
+                    valor = planilha.iat[
 
-                        valor = planilha.iat[
-                            numero_linha,
-                            numero_coluna
-                        ]
+                        numero_linha,
 
-                        total_campo += converter_numero(
-                            valor
-                        )
-
-                    producao[campo] = total_campo
+                        numero_coluna
+                    ]
 
 
-                # --------------------------------------------
-                # VALOR UNITÁRIO
-                # --------------------------------------------
-
-                elif campo == "Valor unitario":
-
-                    valor_encontrado = 0
-
-                    for numero_coluna in colunas:
-
-                        valor = converter_numero(
-                            planilha.iat[
-                                numero_linha,
-                                numero_coluna
-                            ]
-                        )
-
-                        if valor != 0:
-
-                            valor_encontrado = valor
-                            break
-
-                    producao[campo] = valor_encontrado
+                    total_campo += converter_numero(
+                        valor
+                    )
 
 
-                # --------------------------------------------
-                # VALOR TOTAL
-                # --------------------------------------------
-
-                elif campo == "Valor total":
-
-                    valor_encontrado = 0
-
-                    for numero_coluna in colunas:
-
-                        valor = converter_numero(
-                            planilha.iat[
-                                numero_linha,
-                                numero_coluna
-                            ]
-                        )
-
-                        if valor != 0:
-
-                            valor_encontrado = valor
-                            break
-
-                    producao[campo] = valor_encontrado
+                producao[
+                    campo
+                ] = total_campo
 
 
             # ------------------------------------------------
-            # REGISTRO FINAL DO PROFISSIONAL
+            # VALOR UNITÁRIO
+            # ------------------------------------------------
+
+            valor_unitario = 0.0
+
+
+            for numero_coluna in colunas_producao[
+                "Valor unitario"
+            ]:
+
+
+                valor = converter_numero(
+
+                    planilha.iat[
+
+                        numero_linha,
+
+                        numero_coluna
+                    ]
+                )
+
+
+                if valor != 0:
+
+
+                    valor_unitario = valor
+
+                    break
+
+
+            producao[
+                "Valor unitario"
+            ] = valor_unitario
+
+
+            # ------------------------------------------------
+            # VALOR TOTAL
+            # ------------------------------------------------
+
+            valor_total = 0.0
+
+
+            for numero_coluna in colunas_producao[
+                "Valor total"
+            ]:
+
+
+                valor_total += converter_numero(
+
+                    planilha.iat[
+
+                        numero_linha,
+
+                        numero_coluna
+                    ]
+                )
+
+
+            producao[
+                "Valor total"
+            ] = valor_total
+
+
+            # ------------------------------------------------
+            # SALVAR REGISTRO
             # ------------------------------------------------
 
             registros.append(
+
                 {
-                    "Profissional": str(nome).strip(),
 
-                    "CRM": limpar_crm(crm),
+                    "Profissional":
+                        str(nome).strip(),
 
-                    "CRM_ID": chave_crm(crm),
+                    "CRM":
+                        limpar_crm(
+                            crm
+                        ),
 
-                    "Arquivo": nome_arquivo,
+                    "CRM_ID":
+                        chave_crm(
+                            crm
+                        ),
 
-                    "Aba": nome_aba,
+                    "Arquivo":
+                        nome_arquivo,
 
-                    "Linha do Excel": numero_linha + 1,
+                    "Aba":
+                        nome_aba,
+
+                    "Linha do Excel":
+                        numero_linha + 1,
 
                     **producao
                 }
             )
+
 
     dados = pd.DataFrame(
         registros
@@ -1250,40 +1052,47 @@ for campo, colunas in colunas_producao.items():
         "Lançamentos válidos":
             len(dados),
 
+        "Colunas de horas":
+            len(
+                colunas_horas_encontradas
+            ),
+
         "Situação":
-            (
-                "OK"
-                if len(cabecalhos) > 0
-                else "Cabeçalho não reconhecido"
-            )
+
+            "OK"
+
+            if cabecalhos
+
+            else "Cabeçalho não reconhecido"
     }
 
 
     return (
+
         dados,
+
         diagnostico
     )
 
 
 # ============================================================
-# BLOCO 11 - SUGESTÃO DE ABA
+# BLOCO 9 - SUGESTÃO DE ABA
 # ============================================================
 
 def sugerir_abas(
+
     nomes_abas,
+
     competencia_inicial,
+
     competencia_final
 ):
 
-    """
-    Quando o arquivo possui várias abas,
-    tenta sugerir qual deve ser analisada.
 
-    O usuário continua podendo alterar
-    manualmente.
-    """
+    if len(
+        nomes_abas
+    ) == 1:
 
-    if len(nomes_abas) == 1:
 
         return nomes_abas
 
@@ -1303,15 +1112,19 @@ def sugerir_abas(
 
     for aba in nomes_abas:
 
+
         texto = normalizar_texto(
             aba
         )
 
 
         if (
+
             mes_inicial in texto
+
             or mes_final in texto
         ):
+
 
             candidatos.append(
                 aba
@@ -1320,6 +1133,7 @@ def sugerir_abas(
 
     if candidatos:
 
+
         return [
             candidatos[-1]
         ]
@@ -1327,9 +1141,11 @@ def sugerir_abas(
 
     for aba in nomes_abas:
 
+
         if normalizar_texto(
             aba
         ) != "modelo":
+
 
             return [
                 aba
@@ -1342,18 +1158,18 @@ def sugerir_abas(
 
 
 # ============================================================
-# BLOCO 12 - PROCESSAMENTO DO RELATÓRIO
+# BLOCO 10 - PROCESSAMENTO DO RELATÓRIO
 # ============================================================
 
 def processar_relatorio(
+
     arquivo_bytes,
+
     nome_arquivo,
+
     abas
 ):
 
-    """
-    Processa todas as abas escolhidas.
-    """
 
     tabelas = []
 
@@ -1362,7 +1178,9 @@ def processar_relatorio(
 
     for aba in abas:
 
+
         try:
+
 
             dados_aba, diagnostico = ler_profissionais_da_aba(
 
@@ -1381,12 +1199,14 @@ def processar_relatorio(
 
             if not dados_aba.empty:
 
+
                 tabelas.append(
                     dados_aba
                 )
 
 
         except Exception as erro:
+
 
             diagnosticos.append(
 
@@ -1401,6 +1221,9 @@ def processar_relatorio(
                     "Lançamentos válidos":
                         0,
 
+                    "Colunas de horas":
+                        0,
+
                     "Situação":
                         f"ERRO: {erro}"
                 }
@@ -1408,6 +1231,7 @@ def processar_relatorio(
 
 
     if tabelas:
+
 
         dados = pd.concat(
 
@@ -1418,6 +1242,7 @@ def processar_relatorio(
 
 
     else:
+
 
         dados = pd.DataFrame()
 
@@ -1433,19 +1258,16 @@ def processar_relatorio(
 
 
 # ============================================================
-# BLOCO 13 - CONTAGEM DOS PROFISSIONAIS
+# BLOCO 11 - PROFISSIONAIS ÚNICOS
 # ============================================================
 
 def contar_profissionais_unicos(
     dados
 ):
 
-    """
-    Conta profissionais utilizando
-    CRM como identificação principal.
-    """
 
     if dados.empty:
+
 
         return 0
 
@@ -1456,24 +1278,16 @@ def contar_profissionais_unicos(
 
 
 # ============================================================
-# BLOCO 14 - CRM COM MAIS DE UM LANÇAMENTO
+# BLOCO 12 - CRM COM MAIS DE UM LANÇAMENTO
 # ============================================================
 
 def localizar_crms_com_varios_lancamentos(
     dados
 ):
 
-    """
-    Identifica CRMs presentes em mais
-    de uma linha.
-
-    IMPORTANTE:
-
-    isso não significa automaticamente
-    que exista duplicidade.
-    """
 
     if dados.empty:
+
 
         return pd.DataFrame()
 
@@ -1503,8 +1317,9 @@ def localizar_crms_com_varios_lancamentos(
 
         grupo = dados[
 
-            dados["CRM_ID"]
-            == crm_id
+            dados[
+                "CRM_ID"
+            ] == crm_id
         ]
 
 
@@ -1524,14 +1339,21 @@ def localizar_crms_com_varios_lancamentos(
             {
 
                 "CRM":
+
                     grupo.iloc[
                         0
-                    ]["CRM"],
+                    ][
+                        "CRM"
+                    ],
 
                 "Quantidade de lançamentos":
-                    int(quantidade),
+
+                    int(
+                        quantidade
+                    ),
 
                 "Nome(s) encontrado(s)":
+
                     " | ".join(
                         nomes
                     )
@@ -1545,56 +1367,82 @@ def localizar_crms_com_varios_lancamentos(
 
 
 # ============================================================
-# BLOCO 15 - FORMATAÇÃO DE VALORES
+# BLOCO 13 - FORMATAÇÃO
 # ============================================================
 
-def formatar_moeda(valor):
+def formatar_moeda(
+    valor
+):
 
-    """
-    Transforma:
-
-    1250.50
-
-    em:
-
-    R$ 1.250,50
-    """
 
     texto = f"{valor:,.2f}"
+
 
     texto = texto.replace(
         ",",
         "X"
     )
 
+
     texto = texto.replace(
         ".",
         ","
     )
+
 
     texto = texto.replace(
         "X",
         "."
     )
 
+
     return f"R$ {texto}"
 
 
+def formatar_numero(
+    valor,
+    casas=0
+):
+
+
+    texto = f"{valor:,.{casas}f}"
+
+
+    texto = texto.replace(
+        ",",
+        "X"
+    )
+
+
+    texto = texto.replace(
+        ".",
+        ","
+    )
+
+
+    texto = texto.replace(
+        "X",
+        "."
+    )
+
+
+    return texto
+
+
 # ============================================================
-# BLOCO 16 - MOSTRAR ANÁLISE
+# BLOCO 14 - MOSTRAR ANÁLISE
 # ============================================================
 
 def mostrar_analise(
+
     dados,
+
     diagnostico
 ):
 
-    """
-    Exibe os resultados encontrados
-    no relatório.
-    """
 
     if dados is None or dados.empty:
+
 
         st.error(
             "Nenhum profissional válido foi identificado."
@@ -1608,6 +1456,7 @@ def mostrar_analise(
 
         if diagnostico is not None:
 
+
             st.dataframe(
 
                 diagnostico,
@@ -1620,10 +1469,6 @@ def mostrar_analise(
 
         return
 
-
-    # --------------------------------------------------------
-    # PROFISSIONAIS
-    # --------------------------------------------------------
 
     profissionais = contar_profissionais_unicos(
         dados
@@ -1657,8 +1502,8 @@ def mostrar_analise(
 
 
     st.caption(
-        "Profissionais únicos = quantidade de CRMs diferentes. "
-        "Lançamentos = quantidade de linhas válidas encontradas."
+        "Profissionais únicos = CRMs diferentes. "
+        "Lançamentos = linhas válidas encontradas no relatório."
     )
 
 
@@ -1711,10 +1556,6 @@ def mostrar_analise(
     ].sum()
 
 
-    # --------------------------------------------------------
-    # REGRA DO FATURAMENTO
-    # --------------------------------------------------------
-
     consultas_faturamento = (
 
         consultas
@@ -1732,27 +1573,55 @@ def mostrar_analise(
     )
 
 
-    linha1[0].metric(
+    linha1[
+        0
+    ].metric(
+
         "Plantões",
-        f"{plantoes:,.0f}"
+
+        formatar_numero(
+            plantoes,
+            0
+        )
     )
 
 
-    linha1[1].metric(
+    linha1[
+        1
+    ].metric(
+
         "Consultas",
-        f"{consultas:,.0f}"
+
+        formatar_numero(
+            consultas,
+            0
+        )
     )
 
 
-    linha1[2].metric(
+    linha1[
+        2
+    ].metric(
+
         "Procedimentos",
-        f"{procedimentos:,.0f}"
+
+        formatar_numero(
+            procedimentos,
+            0
+        )
     )
 
 
-    linha1[3].metric(
+    linha1[
+        3
+    ].metric(
+
         "Exames",
-        f"{exames:,.0f}"
+
+        formatar_numero(
+            exames,
+            0
+        )
     )
 
 
@@ -1761,32 +1630,64 @@ def mostrar_analise(
     )
 
 
-    linha2[0].metric(
+    linha2[
+        0
+    ].metric(
+
         "Interconsultas",
-        f"{interconsultas:,.0f}"
+
+        formatar_numero(
+            interconsultas,
+            0
+        )
     )
 
 
-    linha2[1].metric(
+    linha2[
+        1
+    ].metric(
+
         "Pacotes",
-        f"{pacotes:,.0f}"
+
+        formatar_numero(
+            pacotes,
+            0
+        )
     )
 
 
-    linha2[2].metric(
+    linha2[
+        2
+    ].metric(
+
         "Horas",
-        f"{horas:,.2f}"
+
+        formatar_numero(
+            horas,
+            2
+        )
     )
 
 
-    linha2[3].metric(
+    linha2[
+        3
+    ].metric(
+
         "Consultas p/ faturamento",
-        f"{consultas_faturamento:,.0f}"
+
+        formatar_numero(
+
+            consultas_faturamento,
+
+            0
+        )
     )
 
 
     st.metric(
+
         "💰 Valor total encontrado",
+
         formatar_moeda(
             valor_total
         )
@@ -1795,7 +1696,8 @@ def mostrar_analise(
 
     st.caption(
         "Consultas para faturamento = "
-        "consultas + procedimentos + exames + interconsultas."
+        "consultas + procedimentos + exames + interconsultas. "
+        "Pacotes permanecem separados."
     )
 
 
@@ -1838,14 +1740,11 @@ def mostrar_analise(
     ]
 
 
-    tabela_visualizacao = dados[
-        colunas_exibicao
-    ].copy()
-
-
     st.dataframe(
 
-        tabela_visualizacao,
+        dados[
+            colunas_exibicao
+        ].copy(),
 
         use_container_width=True,
 
@@ -1867,7 +1766,7 @@ def mostrar_analise(
 
         st.info(
             "Alguns CRMs aparecem em mais de um lançamento. "
-            "Isso não significa automaticamente que exista duplicidade."
+            "Isso não significa automaticamente duplicidade."
         )
 
 
@@ -1906,21 +1805,7 @@ def mostrar_analise(
 
 
 # ============================================================
-# BLOCO 17 - CONFIGURAÇÃO DA PÁGINA
-# ============================================================
-
-st.set_page_config(
-
-    page_title=NOME_SISTEMA,
-
-    page_icon="📊",
-
-    layout="wide"
-)
-
-
-# ============================================================
-# BLOCO 18 - MENU LATERAL
+# BLOCO 15 - MENU LATERAL
 # ============================================================
 
 st.sidebar.title(
@@ -1986,26 +1871,42 @@ if pagina == "🏠 Início":
     )
 
 
-    colunas[0].metric(
+    colunas[
+        0
+    ].metric(
+
         "⏳ Pendentes",
+
         "0"
     )
 
 
-    colunas[1].metric(
+    colunas[
+        1
+    ].metric(
+
         "✅ Validados",
+
         "0"
     )
 
 
-    colunas[2].metric(
+    colunas[
+        2
+    ].metric(
+
         "⚠️ Com alerta",
+
         "0"
     )
 
 
-    colunas[3].metric(
+    colunas[
+        3
+    ].metric(
+
         "💰 Faturamento",
+
         "R$ 0,00"
     )
 
@@ -2023,9 +1924,14 @@ elif pagina == "📋 Tabelas de referência":
 
 
     st.write(
-        "Nesta área serão consultadas "
-        "as tabelas oficiais utilizadas "
-        "para conferência."
+        "Nesta área serão consultadas as "
+        "tabelas oficiais utilizadas para conferência."
+    )
+
+
+    st.info(
+        "A integração automática com as tabelas "
+        "de referência será adicionada em uma próxima etapa."
     )
 
 
@@ -2042,14 +1948,10 @@ elif pagina == "📤 Novo relatório":
 
 
     st.write(
-        "Preencha os dados e envie "
-        "o relatório que será analisado."
+        "Preencha os dados e envie o relatório "
+        "que será analisado."
     )
 
-
-    # --------------------------------------------------------
-    # MUNICÍPIO
-    # --------------------------------------------------------
 
     municipio = st.text_input(
 
@@ -2059,10 +1961,6 @@ elif pagina == "📤 Novo relatório":
     )
 
 
-    # --------------------------------------------------------
-    # RESPONSÁVEL
-    # --------------------------------------------------------
-
     responsavel = st.text_input(
 
         "Responsável pelo preenchimento",
@@ -2070,10 +1968,6 @@ elif pagina == "📤 Novo relatório":
         placeholder="Nome de quem está enviando"
     )
 
-
-    # --------------------------------------------------------
-    # PERÍODO
-    # --------------------------------------------------------
 
     coluna1, coluna2 = st.columns(
         2
@@ -2096,9 +1990,6 @@ elif pagina == "📤 Novo relatório":
     )
 
 
-    # Calculamos antes para que as variáveis
-    # existam durante toda a página.
-
     competencia_inicial = data_inicial.strftime(
         "%m/%Y"
     )
@@ -2108,10 +1999,6 @@ elif pagina == "📤 Novo relatório":
         "%m/%Y"
     )
 
-
-    # --------------------------------------------------------
-    # CONFERÊNCIA DO PERÍODO
-    # --------------------------------------------------------
 
     if data_final < data_inicial:
 
@@ -2162,17 +2049,12 @@ elif pagina == "📤 Novo relatório":
 
 
             st.info(
-                "Como não é possível identificar "
-                "quanto foi executado em cada mês, "
-                "o relatório será analisado "
-                "integralmente considerando "
+                "Como não é possível identificar quanto "
+                "foi executado em cada mês, o relatório "
+                "será analisado integralmente considerando "
                 "as duas tabelas de referência."
             )
 
-
-        # ----------------------------------------------------
-        # COMPETÊNCIA DO FATURAMENTO
-        # ----------------------------------------------------
 
         st.subheader(
             "💰 Competência do faturamento"
@@ -2180,15 +2062,10 @@ elif pagina == "📤 Novo relatório":
 
 
         st.success(
-            f"O relatório será lançado "
-            f"integralmente em "
-            f"{competencia_inicial}"
+            f"O relatório será lançado integralmente "
+            f"em {competencia_inicial}"
         )
 
-
-    # --------------------------------------------------------
-    # OBSERVAÇÕES
-    # --------------------------------------------------------
 
     observacoes = st.text_area(
 
@@ -2197,10 +2074,6 @@ elif pagina == "📤 Novo relatório":
         placeholder="Campo opcional"
     )
 
-
-    # --------------------------------------------------------
-    # UPLOAD
-    # --------------------------------------------------------
 
     st.subheader(
         "📎 Relatório Excel"
@@ -2258,14 +2131,10 @@ elif pagina == "📤 Novo relatório":
 
 
             st.caption(
-                "O sistema sugere uma aba. "
-                "Você pode alterar a seleção."
+                "O sistema sugere uma aba, mas você pode "
+                "alterar a seleção antes da análise."
             )
 
-
-            # ------------------------------------------------
-            # BOTÃO DE ANÁLISE
-            # ------------------------------------------------
 
             if st.button(
 
@@ -2310,10 +2179,6 @@ elif pagina == "📤 Novo relatório":
                         )
 
 
-                    # ----------------------------------------
-                    # GUARDAR RESULTADO TEMPORARIAMENTE
-                    # ----------------------------------------
-
                     st.session_state[
                         "dados_relatorio"
                     ] = dados
@@ -2340,16 +2205,6 @@ elif pagina == "📤 Novo relatório":
 
 
                     st.session_state[
-                        "data_inicial_relatorio"
-                    ] = data_inicial
-
-
-                    st.session_state[
-                        "data_final_relatorio"
-                    ] = data_final
-
-
-                    st.session_state[
                         "periodo_relatorio"
                     ] = (
 
@@ -2359,16 +2214,6 @@ elif pagina == "📤 Novo relatório":
 
                         f"{data_final.strftime('%d/%m/%Y')}"
                     )
-
-
-                    st.session_state[
-                        "competencia_inicial"
-                    ] = competencia_inicial
-
-
-                    st.session_state[
-                        "competencia_final"
-                    ] = competencia_final
 
 
                     st.session_state[
@@ -2393,19 +2238,19 @@ elif pagina == "📤 Novo relatório":
 
 
             st.error(
-                "Não foi possível abrir "
+                "Não foi possível abrir ou analisar "
                 "o arquivo Excel."
             )
 
 
-            st.write(
-                "Detalhes técnicos:"
-            )
+            with st.expander(
+                "Ver detalhes do erro"
+            ):
 
 
-            st.code(
-                str(erro)
-            )
+                st.code(
+                    str(erro)
+                )
 
 
 # ============================================================
@@ -2424,8 +2269,8 @@ elif pagina == "🔍 Análise":
 
 
         st.info(
-            "Primeiro envie e analise "
-            "um relatório em 📤 Novo relatório."
+            "Primeiro envie e analise um relatório "
+            "em 📤 Novo relatório."
         )
 
 
@@ -2433,36 +2278,52 @@ elif pagina == "🔍 Análise":
 
 
         st.write(
+
             "**Município:**",
+
             st.session_state.get(
+
                 "municipio_relatorio",
+
                 "Não informado"
             )
         )
 
 
         st.write(
+
             "**Responsável:**",
+
             st.session_state.get(
+
                 "responsavel_relatorio",
+
                 "Não informado"
             )
         )
 
 
         st.write(
+
             "**Período:**",
+
             st.session_state.get(
+
                 "periodo_relatorio",
+
                 ""
             )
         )
 
 
         st.write(
+
             "**Competência do faturamento:**",
+
             st.session_state.get(
+
                 "competencia_faturamento",
+
                 ""
             )
         )
@@ -2496,15 +2357,14 @@ elif pagina == "⚠️ Divergências":
 
 
     st.write(
-        "Nesta área aparecerão "
-        "possíveis erros e itens "
-        "que precisam de conferência."
+        "Nesta área aparecerão possíveis erros "
+        "e itens para conferência."
     )
 
 
     st.info(
-        "A auditoria de códigos e valores "
-        "será adicionada na próxima etapa."
+        "A auditoria dos códigos, valores oficiais "
+        "e multiplicações será adicionada posteriormente."
     )
 
 
@@ -2521,8 +2381,8 @@ elif pagina == "✅ Validação":
 
 
     st.write(
-        "A validação humana será "
-        "adicionada nas próximas etapas."
+        "A validação humana será adicionada "
+        "nas próximas etapas."
     )
 
 
@@ -2539,8 +2399,8 @@ elif pagina == "💰 Faturamento":
 
 
     st.write(
-        "Aqui serão exibidos os "
-        "relatórios já validados."
+        "Aqui serão exibidos os relatórios "
+        "já validados."
     )
 
 
