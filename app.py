@@ -3,7 +3,7 @@
 SISTEMA DE VALIDAÇÃO E FATURAMENTO MÉDICO
 ============================================================
 
-Versão: 1.0
+Versão: 1.1
 Linguagem: Python
 
 OBJETIVO:
@@ -17,10 +17,10 @@ e faturamento de relatórios de serviços médicos.
 # BLOCO 1 - BIBLIOTECAS
 # ============================================================
 
-# Importamos o Streamlit.
-# Ele será responsável por criar as telas do sistema
-# que serão abertas no navegador.
+# Streamlit cria a interface do sistema no navegador.
+import streamlit as st
 
+# "date" permite trabalhar com datas.
 from datetime import date
 
 
@@ -28,19 +28,14 @@ from datetime import date
 # BLOCO 2 - CONFIGURAÇÕES GERAIS
 # ============================================================
 
-# Aqui definimos informações que poderão ser alteradas
-# facilmente no futuro.
-
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
 
-VERSAO = "1.0"
+VERSAO = "1.1"
 
 
 # ============================================================
 # BLOCO 3 - CONFIGURAÇÃO DA PÁGINA
 # ============================================================
-
-# Esta função configura a aparência básica da página.
 
 st.set_page_config(
     page_title=NOME_SISTEMA,
@@ -52,8 +47,6 @@ st.set_page_config(
 # ============================================================
 # BLOCO 4 - MENU LATERAL
 # ============================================================
-
-# O usuário escolherá no menu qual parte do sistema deseja abrir.
 
 st.sidebar.title("📊 Faturamento Médico")
 
@@ -85,17 +78,15 @@ st.sidebar.caption(
 
 if pagina == "🏠 Início":
 
-    st.title(NOME_SISTEMA)
+    st.title("🏠 Início")
 
     st.write(
         "Sistema para leitura, conferência, "
         "validação e faturamento de serviços médicos."
     )
 
-    # Criamos quatro espaços lado a lado.
     coluna1, coluna2, coluna3, coluna4 = st.columns(4)
 
-    # Cada espaço recebe um indicador.
     coluna1.metric(
         "⏳ Pendentes",
         "0"
@@ -140,9 +131,160 @@ elif pagina == "📤 Novo relatório":
     st.title("📤 Novo relatório")
 
     st.write(
-        "Aqui será realizado o envio do relatório "
+        "Preencha os dados abaixo e envie o relatório "
         "que será analisado pelo sistema."
     )
+
+
+    # --------------------------------------------------------
+    # MUNICÍPIO
+    # --------------------------------------------------------
+
+    municipio = st.text_input(
+        "Município",
+        placeholder="Ex.: Brumadinho"
+    )
+
+
+    # --------------------------------------------------------
+    # RESPONSÁVEL
+    # --------------------------------------------------------
+
+    responsavel = st.text_input(
+        "Responsável pelo preenchimento",
+        placeholder="Nome de quem está enviando o relatório"
+    )
+
+
+    # --------------------------------------------------------
+    # DATAS DO RELATÓRIO
+    # --------------------------------------------------------
+
+    coluna1, coluna2 = st.columns(2)
+
+    data_inicial = coluna1.date_input(
+        "Data inicial",
+        value=date.today()
+    )
+
+    data_final = coluna2.date_input(
+        "Data final",
+        value=date.today()
+    )
+
+
+    # --------------------------------------------------------
+    # CONFERÊNCIA DAS DATAS
+    # --------------------------------------------------------
+
+    if data_final < data_inicial:
+
+        st.error(
+            "A data final não pode ser anterior "
+            "à data inicial."
+        )
+
+    else:
+
+        # Converte as datas para mês/ano.
+        competencia_inicial = data_inicial.strftime("%m/%Y")
+
+        competencia_final = data_final.strftime("%m/%Y")
+
+
+        # ----------------------------------------------------
+        # UMA COMPETÊNCIA
+        # ----------------------------------------------------
+
+        if competencia_inicial == competencia_final:
+
+            st.success(
+                f"✅ Competência identificada: "
+                f"{competencia_inicial}"
+            )
+
+            st.info(
+                "O relatório será conferido utilizando "
+                "uma tabela de referência."
+            )
+
+
+        # ----------------------------------------------------
+        # DUAS COMPETÊNCIAS
+        # ----------------------------------------------------
+
+        else:
+
+            st.warning(
+                "⚠️ Este relatório envolve duas competências."
+            )
+
+            st.write(
+                f"**Primeira competência:** "
+                f"{competencia_inicial}"
+            )
+
+            st.write(
+                f"**Segunda competência:** "
+                f"{competencia_final}"
+            )
+
+            st.info(
+                "Como não é possível identificar quanto "
+                "foi executado em cada mês, o relatório será "
+                "analisado integralmente considerando as duas "
+                "tabelas de referência."
+            )
+
+
+        # ----------------------------------------------------
+        # COMPETÊNCIA DO FATURAMENTO
+        # ----------------------------------------------------
+
+        st.subheader("💰 Competência do faturamento")
+
+        st.success(
+            f"O relatório será lançado integralmente em "
+            f"{competencia_inicial}"
+        )
+
+
+    # --------------------------------------------------------
+    # OUTRAS INFORMAÇÕES
+    # --------------------------------------------------------
+
+    observacoes = st.text_area(
+        "Outras informações / observações",
+        placeholder="Campo opcional"
+    )
+
+
+    # --------------------------------------------------------
+    # UPLOAD DO RELATÓRIO
+    # --------------------------------------------------------
+
+    st.subheader("📎 Relatório")
+
+    arquivo = st.file_uploader(
+        "Selecione o arquivo Excel",
+        type=["xlsx", "xls"]
+    )
+
+
+    # --------------------------------------------------------
+    # ARQUIVO RECEBIDO
+    # --------------------------------------------------------
+
+    if arquivo is not None:
+
+        st.success(
+            f"✅ Arquivo recebido: {arquivo.name}"
+        )
+
+        st.write(
+            "Na próxima etapa o sistema fará "
+            "a leitura automática desse relatório."
+        )
 
 
 # ============================================================
