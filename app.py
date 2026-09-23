@@ -21,7 +21,7 @@ e faturamento de relatórios de serviços médicos.
 # Ele será responsável por criar as telas do sistema
 # que serão abertas no navegador.
 
-import streamlit as st
+from datetime import date
 
 
 # ============================================================
