@@ -13,18 +13,17 @@ import streamlit as st
 # ============================================================
 
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "1.6"
+VERSAO = "1.7"
 
 URL_ICISMEP = (
     "https://icismep.mg.gov.br/"
     "tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 )
 
-
 st.set_page_config(
     page_title=NOME_SISTEMA,
     page_icon="📊",
-    layout="wide"
+    layout="wide",
 )
 
 
@@ -117,9 +116,11 @@ def converter_numero(valor):
 def formatar_moeda(valor):
 
     if valor is None:
+
         return "—"
 
     if isinstance(valor, float) and pd.isna(valor):
+
         return "—"
 
     texto = f"{float(valor):,.2f}"
@@ -142,7 +143,10 @@ def formatar_moeda(valor):
     return f"R$ {texto}"
 
 
-def formatar_numero(valor, casas=0):
+def formatar_numero(
+    valor,
+    casas=0
+):
 
     texto = f"{float(valor):,.{casas}f}"
 
@@ -175,9 +179,19 @@ def normalizar_codigo(valor):
     if isinstance(valor, (int, float)):
 
         if float(valor).is_integer():
-            return str(int(valor))
 
-    texto = str(valor).strip().upper()
+            return str(
+                int(valor)
+            )
+
+    texto = str(
+        valor
+    ).strip().upper()
+
+    texto = texto.replace(
+        " ",
+        ""
+    )
 
     if re.fullmatch(
         r"\d+[\.,]0",
@@ -186,19 +200,84 @@ def normalizar_codigo(valor):
 
         return texto[:-2]
 
-    return texto.replace(
-        " ",
-        ""
-    )
+    return texto
 
 
 def competencia_valida(texto):
 
     return bool(
+
         re.fullmatch(
+
             r"(0[1-9]|1[0-2])/\d{4}",
+
             str(texto).strip()
         )
+    )
+
+
+def competencias_do_periodo(
+    data_inicial,
+    data_final
+):
+
+    """
+    Descobre todas as competências
+    tocadas pelo período.
+
+    Exemplo:
+
+    15/08/2026 até 14/09/2026
+
+    retorna:
+
+    08/2026
+    09/2026
+    """
+
+    inicio = pd.Period(
+        data_inicial,
+        freq="M"
+    )
+
+    fim = pd.Period(
+        data_final,
+        freq="M"
+    )
+
+    periodos = pd.period_range(
+
+        inicio,
+
+        fim,
+
+        freq="M"
+    )
+
+    return [
+
+        periodo.strftime(
+            "%m/%Y"
+        )
+
+        for periodo in periodos
+    ]
+
+
+def proximo(
+    valor1,
+    valor2,
+    tolerancia=0.02
+):
+
+    return (
+
+        abs(
+            float(valor1)
+            - float(valor2)
+        )
+
+        <= tolerancia
     )
 
 
@@ -217,9 +296,14 @@ def limpar_crm(valor):
     if isinstance(valor, (int, float)):
 
         if float(valor).is_integer():
-            return str(int(valor))
 
-    texto = str(valor).strip()
+            return str(
+                int(valor)
+            )
+
+    texto = str(
+        valor
+    ).strip()
 
     if re.fullmatch(
         r"\d+\.0",
@@ -234,9 +318,14 @@ def limpar_crm(valor):
 def chave_crm(valor):
 
     return re.sub(
+
         r"\D",
+
         "",
-        limpar_crm(valor)
+
+        limpar_crm(
+            valor
+        )
     )
 
 
@@ -247,6 +336,7 @@ def crm_valido(valor):
     )
 
     return (
+
         4
         <= len(numeros)
         <= 10
@@ -302,6 +392,7 @@ def profissional_valido(
     for termo in invalidos:
 
         if nome_normalizado.startswith(
+
             normalizar_texto(
                 termo
             )
@@ -324,7 +415,7 @@ def profissional_valido(
 
 
 # ============================================================
-# CABEÇALHO DO RELATÓRIO
+# CABEÇALHO PRINCIPAL
 # ============================================================
 
 def linha_e_cabecalho(linha):
@@ -357,12 +448,18 @@ def linha_e_cabecalho(linha):
 
 
     return (
+
         encontrou_profissional
-        and encontrou_crm
+
+        and
+
+        encontrou_crm
     )
 
 
-def localizar_coluna_profissional(linha):
+def localizar_coluna_profissional(
+    linha
+):
 
     for numero_coluna, valor in enumerate(
         linha
@@ -374,10 +471,13 @@ def localizar_coluna_profissional(linha):
 
             return numero_coluna
 
+
     return None
 
 
-def localizar_coluna_crm(linha):
+def localizar_coluna_crm(
+    linha
+):
 
     for numero_coluna, valor in enumerate(
         linha
@@ -387,6 +487,7 @@ def localizar_coluna_crm(linha):
             valor
         )
 
+
         if (
             texto == "crm"
             or texto.startswith(
@@ -395,6 +496,7 @@ def localizar_coluna_crm(linha):
         ):
 
             return numero_coluna
+
 
     return None
 
@@ -406,7 +508,9 @@ def localizar_coluna_exata(
 
     nomes_normalizados = {
 
-        normalizar_texto(nome)
+        normalizar_texto(
+            nome
+        )
 
         for nome in nomes
     }
@@ -439,12 +543,19 @@ def localizar_colunas_modelo_generico(
         "codigo":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "cod do vinculo",
+
                     "codigo do vinculo",
+
                     "cod vinculo",
+
                     "codigo",
+
                     "cod"
                 ]
             ),
@@ -453,11 +564,17 @@ def localizar_colunas_modelo_generico(
         "servico":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "vinculo contratual utilizado",
+
                     "vinculo contratual",
+
                     "servico",
+
                     "atividade"
                 ]
             ),
@@ -466,9 +583,13 @@ def localizar_colunas_modelo_generico(
         "unidade":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "unidade de medida",
+
                     "unid de medida"
                 ]
             ),
@@ -477,10 +598,15 @@ def localizar_colunas_modelo_generico(
         "quantidade":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "quant",
+
                     "quantidade",
+
                     "qtd"
                 ]
             ),
@@ -489,10 +615,15 @@ def localizar_colunas_modelo_generico(
         "valor_unitario":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "valor unit",
+
                     "valor unitario",
+
                     "valor da unidade"
                 ]
             ),
@@ -501,10 +632,15 @@ def localizar_colunas_modelo_generico(
         "valor_bruto":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "valor total",
+
                     "valor bruto",
+
                     "total bruto"
                 ]
             ),
@@ -513,10 +649,15 @@ def localizar_colunas_modelo_generico(
         "valor_final":
 
             localizar_coluna_exata(
+
                 cabecalho,
+
                 [
+
                     "valor total final",
+
                     "valor liquido",
+
                     "valor final"
                 ]
             )
@@ -524,47 +665,62 @@ def localizar_colunas_modelo_generico(
 
 
 # ============================================================
-# CLASSIFICAÇÃO DA PRODUÇÃO
+# CLASSIFICAR PRODUÇÃO
 # ============================================================
 
-def classificar_unidade_medida(valor):
+def classificar_unidade_medida(
+    valor
+):
 
     texto = normalizar_texto(
         valor
     )
 
+
     if not texto:
+
         return None
 
 
     if "interconsulta" in texto:
+
         return "Interconsultas"
 
 
     if "pacote" in texto:
+
         return "Pacotes"
 
 
     if "plantao" in texto:
+
         return "Plantoes"
 
 
     if "procedimento" in texto:
+
         return "Procedimentos"
 
 
     if "exame" in texto:
+
         return "Exames"
 
 
     if "consulta" in texto:
+
         return "Consultas"
 
 
     if (
+
         texto == "hora"
+
         or "horas" in texto
-        or texto.startswith("hora ")
+
+        or texto.startswith(
+            "hora "
+        )
     ):
 
         return "Horas"
@@ -574,7 +730,7 @@ def classificar_unidade_medida(valor):
 
 
 # ============================================================
-# CABEÇALHO EM VÁRIAS LINHAS
+# CABEÇALHOS EM VÁRIAS LINHAS
 # ============================================================
 
 def localizar_colunas_producao_multilinha(
@@ -607,7 +763,9 @@ def localizar_colunas_producao_multilinha(
 
 
     linha_final = min(
+
         linha_cabecalho + 6,
+
         len(planilha)
     )
 
@@ -621,18 +779,23 @@ def localizar_colunas_producao_multilinha(
 
 
         for numero_linha in range(
+
             linha_cabecalho,
+
             linha_final
         ):
 
 
             valor = planilha.iat[
+
                 numero_linha,
+
                 numero_coluna
             ]
 
 
             textos_coluna.append(
+
                 normalizar_texto(
                     valor
                 )
@@ -643,17 +806,23 @@ def localizar_colunas_producao_multilinha(
 
 
             if not texto:
+
                 continue
 
 
             # HORAS
 
             if (
+
                 "quant de hora" in texto
+
                 or "quantidade de hora" in texto
+
                 or "qtd hora" in texto
+
                 or texto == "horas"
             ):
+
 
                 resultado[
                     "Horas"
@@ -665,11 +834,16 @@ def localizar_colunas_producao_multilinha(
             # PLANTÕES
 
             if (
+
                 "quant de plantao" in texto
+
                 or "quant plantao" in texto
+
                 or "qtd plantao" in texto
+
                 or texto == "plantoes"
             ):
+
 
                 resultado[
                     "Plantoes"
@@ -678,14 +852,19 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # INTERCONSULTAS
+            # INTERCONSULTA
 
             if (
+
                 "quant de interconsulta" in texto
+
                 or "quant interconsulta" in texto
+
                 or "qtd interconsulta" in texto
+
                 or texto == "interconsultas"
             ):
+
 
                 resultado[
                     "Interconsultas"
@@ -694,16 +873,23 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # PACOTES
+            # PACOTE
 
             if (
+
                 "quant de pacote" in texto
+
                 or "quant pacote" in texto
+
                 or "qtd pacote" in texto
+
                 or "pacote de consulta" in texto
+
                 or "pacote consultas" in texto
+
                 or texto == "pacotes"
             ):
+
 
                 resultado[
                     "Pacotes"
@@ -712,18 +898,26 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # CONSULTAS
+            # CONSULTA
 
             if (
+
                 (
+
                     "quant de consulta" in texto
+
                     or "quant consulta" in texto
+
                     or "qtd consulta" in texto
+
                     or texto == "consultas"
                 )
+
                 and "interconsulta" not in texto
+
                 and "pacote" not in texto
             ):
+
 
                 resultado[
                     "Consultas"
@@ -732,14 +926,19 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # PROCEDIMENTOS
+            # PROCEDIMENTO
 
             if (
+
                 "quant de procedimento" in texto
+
                 or "quant procedimento" in texto
+
                 or "qtd procedimento" in texto
+
                 or texto == "procedimentos"
             ):
+
 
                 resultado[
                     "Procedimentos"
@@ -748,14 +947,19 @@ def localizar_colunas_producao_multilinha(
                 )
 
 
-            # EXAMES
+            # EXAME
 
             if (
+
                 "quant de exame" in texto
+
                 or "quant exame" in texto
+
                 or "qtd exame" in texto
+
                 or texto == "exames"
             ):
+
 
                 resultado[
                     "Exames"
@@ -767,14 +971,22 @@ def localizar_colunas_producao_multilinha(
             # VALOR UNITÁRIO
 
             if (
+
                 "valor da hora" in texto
+
                 or "valor da consulta" in texto
+
                 or "valor consulta" in texto
+
                 or "valor do procedimento" in texto
+
                 or "valor procedimento" in texto
+
                 or texto == "valor unit"
+
                 or texto == "valor unitario"
             ):
+
 
                 resultado[
                     "Valor unitario"
@@ -785,11 +997,15 @@ def localizar_colunas_producao_multilinha(
 
             # VALOR FINAL
 
-            if (
-                texto == "valor total final"
-                or texto == "valor final"
-                or texto == "valor liquido"
-            ):
+            if texto in [
+
+                "valor total final",
+
+                "valor final",
+
+                "valor liquido"
+            ]:
+
 
                 resultado[
                     "Valor final"
@@ -800,11 +1016,15 @@ def localizar_colunas_producao_multilinha(
 
             # VALOR BRUTO
 
-            elif (
-                texto == "valor total"
-                or texto == "valor bruto"
-                or texto == "total bruto"
-            ):
+            elif texto in [
+
+                "valor total",
+
+                "valor bruto",
+
+                "total bruto"
+            ]:
+
 
                 resultado[
                     "Valor bruto"
@@ -815,9 +1035,14 @@ def localizar_colunas_producao_multilinha(
 
     for campo in resultado:
 
+
         resultado[campo] = list(
+
             dict.fromkeys(
-                resultado[campo]
+
+                resultado[
+                    campo
+                ]
             )
         )
 
@@ -851,7 +1076,9 @@ def encontrar_valor_unitario_ativo(
         "Horas"
     ]:
 
+
         colunas_quantidade.update(
+
             colunas_producao[
                 campo
             ]
@@ -877,7 +1104,9 @@ def encontrar_valor_unitario_ativo(
             quantidade = converter_numero(
 
                 planilha.iat[
+
                     numero_linha,
+
                     coluna_quantidade
                 ]
             )
@@ -886,16 +1115,21 @@ def encontrar_valor_unitario_ativo(
             valor = converter_numero(
 
                 planilha.iat[
+
                     numero_linha,
+
                     coluna_valor
                 ]
             )
 
 
             if (
+
                 quantidade != 0
+
                 and valor != 0
             ):
+
 
                 valores_ativos.append(
                     valor
@@ -903,15 +1137,21 @@ def encontrar_valor_unitario_ativo(
 
 
     valores_ativos = list(
+
         dict.fromkeys(
             valores_ativos
         )
     )
 
 
-    if len(valores_ativos) == 1:
+    if len(
+        valores_ativos
+    ) == 1:
 
-        return valores_ativos[0]
+
+        return valores_ativos[
+            0
+        ]
 
 
     return 0.0
@@ -922,8 +1162,11 @@ def encontrar_valor_unitario_ativo(
 # ============================================================
 
 def ler_profissionais_da_aba(
+
     arquivo_bytes,
+
     nome_arquivo,
+
     nome_aba
 ):
 
@@ -944,21 +1187,27 @@ def ler_profissionais_da_aba(
 
     if planilha.empty:
 
+
         return (
 
             pd.DataFrame(),
 
             {
 
-                "Aba": nome_aba,
+                "Aba":
+                    nome_aba,
 
-                "Cabeçalhos encontrados": 0,
+                "Cabeçalhos encontrados":
+                    0,
 
-                "Lançamentos válidos": 0,
+                "Lançamentos válidos":
+                    0,
 
-                "Colunas de horas": 0,
+                "Colunas de horas":
+                    0,
 
-                "Situação": "Aba vazia"
+                "Situação":
+                    "Aba vazia"
             }
         )
 
@@ -979,6 +1228,7 @@ def ler_profissionais_da_aba(
         if linha_e_cabecalho(
             linha
         ):
+
 
             cabecalhos.append(
                 numero_linha
@@ -1011,9 +1261,12 @@ def ler_profissionais_da_aba(
 
 
         if (
+
             coluna_profissional is None
+
             or coluna_crm is None
         ):
+
 
             continue
 
@@ -1043,11 +1296,14 @@ def ler_profissionais_da_aba(
             cabecalhos
         ):
 
+
             linha_final = cabecalhos[
                 posicao + 1
             ]
 
+
         else:
+
 
             linha_final = len(
                 planilha
@@ -1083,24 +1339,32 @@ def ler_profissionais_da_aba(
                 crm
             ):
 
+
                 continue
 
 
             producao = {
 
-                "Plantoes": 0.0,
+                "Plantoes":
+                    0.0,
 
-                "Consultas": 0.0,
+                "Consultas":
+                    0.0,
 
-                "Procedimentos": 0.0,
+                "Procedimentos":
+                    0.0,
 
-                "Exames": 0.0,
+                "Exames":
+                    0.0,
 
-                "Interconsultas": 0.0,
+                "Interconsultas":
+                    0.0,
 
-                "Pacotes": 0.0,
+                "Pacotes":
+                    0.0,
 
-                "Horas": 0.0
+                "Horas":
+                    0.0
             }
 
 
@@ -1117,7 +1381,9 @@ def ler_profissionais_da_aba(
                     ] += converter_numero(
 
                         planilha.iat[
+
                             numero_linha,
+
                             numero_coluna
                         ]
                     )
@@ -1136,6 +1402,7 @@ def ler_profissionais_da_aba(
                 "codigo"
             ] is not None:
 
+
                 codigo = planilha.iat[
 
                     numero_linha,
@@ -1149,6 +1416,7 @@ def ler_profissionais_da_aba(
             if colunas_genericas[
                 "servico"
             ] is not None:
+
 
                 servico = planilha.iat[
 
@@ -1164,6 +1432,7 @@ def ler_profissionais_da_aba(
                 "unidade"
             ] is not None:
 
+
                 unidade_medida = planilha.iat[
 
                     numero_linha,
@@ -1177,6 +1446,7 @@ def ler_profissionais_da_aba(
             if colunas_genericas[
                 "quantidade"
             ] is not None:
+
 
                 quantidade_generica = converter_numero(
 
@@ -1197,18 +1467,21 @@ def ler_profissionais_da_aba(
 
 
             if (
+
                 categoria is not None
+
                 and quantidade_generica != 0
             ):
+
 
                 producao[
                     categoria
                 ] += quantidade_generica
 
 
-            # -----------------------------------------------
+            # ------------------------------------------------
             # VALOR UNITÁRIO
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             valor_unitario = 0.0
 
@@ -1216,6 +1489,7 @@ def ler_profissionais_da_aba(
             if colunas_genericas[
                 "valor_unitario"
             ] is not None:
+
 
                 valor_unitario = converter_numero(
 
@@ -1232,6 +1506,7 @@ def ler_profissionais_da_aba(
 
             if valor_unitario == 0:
 
+
                 valor_unitario = encontrar_valor_unitario_ativo(
 
                     planilha,
@@ -1242,9 +1517,9 @@ def ler_profissionais_da_aba(
                 )
 
 
-            # -----------------------------------------------
+            # ------------------------------------------------
             # VALOR BRUTO
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             valor_bruto = 0.0
 
@@ -1252,6 +1527,7 @@ def ler_profissionais_da_aba(
             if colunas_genericas[
                 "valor_bruto"
             ] is not None:
+
 
                 valor_bruto = converter_numero(
 
@@ -1268,22 +1544,26 @@ def ler_profissionais_da_aba(
 
             else:
 
+
                 for numero_coluna in colunas_producao[
                     "Valor bruto"
                 ]:
 
+
                     valor_bruto += converter_numero(
 
                         planilha.iat[
+
                             numero_linha,
+
                             numero_coluna
                         ]
                     )
 
 
-            # -----------------------------------------------
+            # ------------------------------------------------
             # VALOR FINAL
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             valor_final = 0.0
 
@@ -1291,6 +1571,7 @@ def ler_profissionais_da_aba(
             if colunas_genericas[
                 "valor_final"
             ] is not None:
+
 
                 valor_final = converter_numero(
 
@@ -1307,14 +1588,18 @@ def ler_profissionais_da_aba(
 
             else:
 
+
                 for numero_coluna in colunas_producao[
                     "Valor final"
                 ]:
 
+
                     valor_final += converter_numero(
 
                         planilha.iat[
+
                             numero_linha,
+
                             numero_coluna
                         ]
                     )
@@ -1328,27 +1613,50 @@ def ler_profissionais_da_aba(
                         str(nome).strip(),
 
                     "CRM":
-                        limpar_crm(crm),
+                        limpar_crm(
+                            crm
+                        ),
 
                     "CRM_ID":
-                        chave_crm(crm),
+                        chave_crm(
+                            crm
+                        ),
 
                     "Codigo":
+
                         ""
-                        if pd.isna(codigo)
+
+                        if pd.isna(
+                            codigo
+                        )
+
                         else normalizar_codigo(
                             codigo
                         ),
 
                     "Servico":
+
                         ""
-                        if pd.isna(servico)
-                        else str(servico).strip(),
+
+                        if pd.isna(
+                            servico
+                        )
+
+                        else str(
+                            servico
+                        ).strip(),
 
                     "Unidade de medida":
+
                         ""
-                        if pd.isna(unidade_medida)
-                        else str(unidade_medida).strip(),
+
+                        if pd.isna(
+                            unidade_medida
+                        )
+
+                        else str(
+                            unidade_medida
+                        ).strip(),
 
                     "Arquivo":
                         nome_arquivo,
@@ -1384,10 +1692,14 @@ def ler_profissionais_da_aba(
             nome_aba,
 
         "Cabeçalhos encontrados":
-            len(cabecalhos),
+            len(
+                cabecalhos
+            ),
 
         "Lançamentos válidos":
-            len(dados),
+            len(
+                dados
+            ),
 
         "Colunas de horas":
             len(
@@ -1395,29 +1707,42 @@ def ler_profissionais_da_aba(
             ),
 
         "Situação":
+
             "OK"
+
             if cabecalhos
+
             else "Cabeçalho não reconhecido"
     }
 
 
     return (
+
         dados,
+
         diagnostico
     )
 
 
 # ============================================================
-# ABAS
+# SUGESTÃO DE ABAS
 # ============================================================
 
 def sugerir_abas(
+
     nomes_abas,
+
     competencia_inicial,
+
     competencia_final
 ):
 
-    if len(nomes_abas) == 1:
+
+    if len(
+        nomes_abas
+    ) == 1:
+
+
         return nomes_abas
 
 
@@ -1443,9 +1768,12 @@ def sugerir_abas(
 
 
         if (
+
             mes_inicial in texto
+
             or mes_final in texto
         ):
+
 
             candidatos.append(
                 aba
@@ -1454,6 +1782,7 @@ def sugerir_abas(
 
     if candidatos:
 
+
         return [
             candidatos[-1]
         ]
@@ -1461,9 +1790,11 @@ def sugerir_abas(
 
     for aba in nomes_abas:
 
+
         if normalizar_texto(
             aba
         ) != "modelo":
+
 
             return [
                 aba
@@ -1476,14 +1807,18 @@ def sugerir_abas(
 
 
 # ============================================================
-# PROCESSAMENTO
+# PROCESSAMENTO DO RELATÓRIO
 # ============================================================
 
 def processar_relatorio(
+
     arquivo_bytes,
+
     nome_arquivo,
+
     abas
 ):
+
 
     tabelas = []
 
@@ -1512,6 +1847,7 @@ def processar_relatorio(
 
 
             if not dados_aba.empty:
+
 
                 tabelas.append(
                     dados_aba
@@ -1545,6 +1881,7 @@ def processar_relatorio(
 
     if tabelas:
 
+
         dados = pd.concat(
 
             tabelas,
@@ -1552,7 +1889,9 @@ def processar_relatorio(
             ignore_index=True
         )
 
+
     else:
+
 
         dados = pd.DataFrame()
 
@@ -1568,54 +1907,12 @@ def processar_relatorio(
 
 
 # ============================================================
-# LEITURA DA TABELA OFICIAL ICISMEP
+# TABELA DE REFERÊNCIA - PDF
 # ============================================================
 
-def extrair_nome_secao(linha):
-
-    texto_norm = normalizar_texto(
-        linha
-    )
-
-
-    marcador = (
-        "servicos medicos executados "
-        "nas unidades de saude do municipio de "
-    )
-
-
-    if marcador in texto_norm:
-
-        nome_norm = texto_norm.split(
-            marcador,
-            1
-        )[1].strip()
-
-        return nome_norm.upper()
-
-
-    if (
-        "fundacao hospitalar do estado de minas"
-        in texto_norm
-        or "fhemig" in texto_norm
-    ):
-
-        return "FHEMIG"
-
-
-    if (
-        "servicos medicos executados "
-        "nas unidades de saude do icismep"
-        in texto_norm
-    ):
-
-        return "ICISMEP"
-
-
-    return None
-
-
-def inferir_unidade_referencia(texto):
+def inferir_unidade_referencia(
+    texto
+):
 
     t = normalizar_texto(
         texto
@@ -1623,6 +1920,7 @@ def inferir_unidade_referencia(texto):
 
 
     if "interconsulta" in t:
+
         return "INTERCONSULTA"
 
 
@@ -1634,31 +1932,43 @@ def inferir_unidade_referencia(texto):
         return "PLANTÃO 12H"
 
 
+    if "plantao" in t:
+
+        return "PLANTÃO"
+
+
     if "procedimento" in t:
+
         return "PROCEDIMENTO"
 
 
     if "consulta" in t:
+
         return "CONSULTA"
 
 
     if "exame" in t:
+
         return "EXAME"
 
 
     if "diaria" in t:
+
         return "DIÁRIA"
 
 
     if "hora" in t:
+
         return "HORA"
 
 
     if "mensal" in t:
+
         return "MENSAL"
 
 
     if "mes" in t:
+
         return "MÊS"
 
 
@@ -1670,29 +1980,31 @@ def extrair_referencias_pdf(
 ):
 
     """
-    Extrai do PDF oficial:
+    Lê os códigos e valores do PDF.
 
-    município
-    código
-    unidade de medida
-    valor oficial
-    página
+    NÃO existe separação por município.
+
+    Se o mesmo código e valor aparecerem
+    várias vezes no PDF, o sistema elimina
+    apenas as repetições idênticas.
     """
 
     registros = []
 
-    municipio_atual = ""
-
 
     with pdfplumber.open(
+
         io.BytesIO(
             pdf_bytes
         )
+
     ) as pdf:
 
 
         for pagina_numero, pagina in enumerate(
+
             pdf.pages,
+
             start=1
         ):
 
@@ -1702,31 +2014,15 @@ def extrair_referencias_pdf(
                 x_tolerance=2,
 
                 y_tolerance=2
+
             ) or ""
 
 
             for linha in texto.splitlines():
 
 
-                nova_secao = extrair_nome_secao(
-                    linha
-                )
+                linha_limpa = linha.strip()
 
-
-                if nova_secao:
-
-                    municipio_atual = nova_secao
-
-                    continue
-
-
-                # Exemplos que podem aparecer:
-                #
-                # 93 CONSULTA R$ 100,24
-                #
-                # 95 DIAS DE SEMANA HORA R$ 340,00
-                #
-                # 34 NÃO SE APLICA PLANTÃO 12H R$ 2.890,17
 
                 match = re.match(
 
@@ -1734,7 +2030,7 @@ def extrair_referencias_pdf(
                     r"(.+?)\s+"
                     r"R\$\s*([\d\.\s]+,\d{2})\s*$",
 
-                    linha.strip(),
+                    linha_limpa,
 
                     flags=re.IGNORECASE
                 )
@@ -1750,7 +2046,7 @@ def extrair_referencias_pdf(
                 )
 
 
-                meio = match.group(
+                descricao = match.group(
                     2
                 ).strip()
 
@@ -1760,14 +2056,8 @@ def extrair_referencias_pdf(
                 )
 
 
-                unidade = inferir_unidade_referencia(
-                    meio
-                )
-
-
                 if (
-                    not municipio_atual
-                    or not codigo
+                    not codigo
                     or valor <= 0
                 ):
 
@@ -1778,19 +2068,21 @@ def extrair_referencias_pdf(
 
                     {
 
-                        "Municipio":
-                            municipio_atual,
-
                         "Codigo":
                             codigo,
 
-                        "Unidade":
-                            unidade,
+                        "Descricao referencia":
+                            descricao,
+
+                        "Unidade referencia":
+                            inferir_unidade_referencia(
+                                descricao
+                            ),
 
                         "Valor oficial":
                             valor,
 
-                        "Página PDF":
+                        "Pagina PDF":
                             pagina_numero
                     }
                 )
@@ -1808,11 +2100,9 @@ def extrair_referencias_pdf(
 
             subset=[
 
-                "Municipio",
-
                 "Codigo",
 
-                "Unidade",
+                "Unidade referencia",
 
                 "Valor oficial"
             ],
@@ -1830,77 +2120,54 @@ def extrair_referencias_pdf(
 
 
 # ============================================================
-# MUNICÍPIO
+# CADASTRO DA TABELA
 # ============================================================
 
-def municipio_corresponde(
-    municipio_referencia,
-    municipio_digitado
-):
+def cadastrar_tabela_referencia(
 
-    a = normalizar_texto(
-        municipio_referencia
-    )
-
-
-    b = normalizar_texto(
-        municipio_digitado
-    )
-
-
-    if (
-        not a
-        or not b
-    ):
-
-        return False
-
-
-    return (
-        a == b
-        or a in b
-        or b in a
-    )
-
-
-# ============================================================
-# CADASTRAR TABELA
-# ============================================================
-
-def cadastrar_referencia(
     dados_pdf,
+
     competencia,
-    municipio,
+
+    data_tabela,
+
     versao,
-    arquivo_nome,
-    ativa=True
+
+    arquivo_nome
 ):
 
 
     if dados_pdf.empty:
+
         return 0
 
 
-    mascara = dados_pdf[
-        "Municipio"
-    ].apply(
+    dados = dados_pdf.copy()
 
-        lambda x:
 
-            municipio_corresponde(
-                x,
-                municipio
-            )
+    versao_limpa = (
+
+        versao.strip()
+
+        or "Sem identificação"
     )
 
 
-    dados = dados_pdf[
-        mascara
-    ].copy()
+    data_texto = data_tabela.strftime(
+        "%d/%m/%Y"
+    )
 
 
-    if dados.empty:
-        return 0
+    id_tabela = (
+
+        f"{competencia}|"
+
+        f"{data_texto}|"
+
+        f"{versao_limpa}|"
+
+        f"{arquivo_nome}"
+    )
 
 
     dados[
@@ -1909,16 +2176,13 @@ def cadastrar_referencia(
 
 
     dados[
-        "Municipio informado"
-    ] = municipio.strip()
+        "Data tabela"
+    ] = data_texto
 
 
     dados[
         "Versao"
-    ] = (
-        versao.strip()
-        or "Sem identificação"
-    )
+    ] = versao_limpa
 
 
     dados[
@@ -1927,90 +2191,38 @@ def cadastrar_referencia(
 
 
     dados[
-        "Ativa"
-    ] = bool(
-        ativa
-    )
+        "ID tabela"
+    ] = id_tabela
 
 
-    if "tabelas_referencia" not in st.session_state:
+    atual = st.session_state.get(
 
-        st.session_state[
-            "tabelas_referencia"
-        ] = pd.DataFrame()
+        "tabelas_referencia",
 
+        pd.DataFrame()
 
-    atual = st.session_state[
-        "tabelas_referencia"
-    ].copy()
+    ).copy()
 
 
-    # Se a nova tabela for marcada como ativa,
-    # as versões anteriores da mesma competência
-    # e município permanecem salvas, mas deixam
-    # de ser ativas.
+    # Se o mesmo arquivo for cadastrado
+    # novamente com os mesmos dados,
+    # substituímos somente aquela cópia.
+
+    # Isso NÃO remove outras versões.
 
     if (
-        ativa
-        and not atual.empty
-    ):
 
-
-        mesma_comp = atual[
-            "Competencia"
-        ].astype(
-            str
-        ).eq(
-            competencia
-        )
-
-
-        mesmo_mun = atual[
-            "Municipio informado"
-        ].apply(
-
-            lambda x:
-
-                municipio_corresponde(
-                    x,
-                    municipio
-                )
-        )
-
-
-        atual.loc[
-            mesma_comp & mesmo_mun,
-            "Ativa"
-        ] = False
-
-
-    id_novo = (
-
-        f"{competencia}|"
-
-        f"{normalizar_texto(municipio)}|"
-
-        f"{versao.strip()}|"
-
-        f"{arquivo_nome}"
-    )
-
-
-    dados[
-        "ID versão"
-    ] = id_novo
-
-
-    if (
         not atual.empty
-        and "ID versão" in atual.columns
+
+        and "ID tabela" in atual.columns
     ):
+
 
         atual = atual[
 
             atual[
-                "ID versão"
-            ] != id_novo
+                "ID tabela"
+            ] != id_tabela
         ]
 
 
@@ -2019,7 +2231,9 @@ def cadastrar_referencia(
     ] = pd.concat(
 
         [
+
             atual,
+
             dados
         ],
 
@@ -2033,108 +2247,115 @@ def cadastrar_referencia(
 
 
 # ============================================================
-# BUSCAR VALOR OFICIAL
+# TODAS AS TABELAS DO PERÍODO
 # ============================================================
 
-def buscar_valores_oficiais(
+def tabelas_do_periodo(
+
     tabelas,
-    competencia,
-    municipio,
+
+    data_inicial,
+
+    data_final
+):
+
+    """
+    REGRA IMPORTANTE:
+
+    nenhuma tabela é escolhida como principal.
+
+    Se o relatório envolve agosto e setembro,
+    TODAS as tabelas cadastradas de agosto
+    e TODAS as tabelas cadastradas de setembro
+    serão consideradas.
+    """
+
+    if (
+        tabelas is None
+        or tabelas.empty
+    ):
+
+        return pd.DataFrame()
+
+
+    competencias = competencias_do_periodo(
+
+        data_inicial,
+
+        data_final
+    )
+
+
+    resultado = tabelas[
+
+        tabelas[
+            "Competencia"
+        ].astype(
+            str
+        ).isin(
+            competencias
+        )
+
+    ].copy()
+
+
+    return resultado
+
+
+def referencias_do_codigo(
+
+    tabelas_periodo,
+
     codigo
 ):
 
 
     if (
-        tabelas is None
-        or tabelas.empty
+        tabelas_periodo is None
+        or tabelas_periodo.empty
         or not codigo
     ):
 
-        return []
+
+        return pd.DataFrame()
 
 
-    filtro = tabelas[
-        "Competencia"
-    ].astype(
-        str
-    ).eq(
-        competencia
+    codigo_normalizado = normalizar_codigo(
+        codigo
     )
 
 
-    filtro &= tabelas[
-        "Codigo"
-    ].astype(
-        str
-    ).apply(
-        normalizar_codigo
-    ).eq(
-        normalizar_codigo(
-            codigo
+    resultado = tabelas_periodo[
+
+        tabelas_periodo[
+            "Codigo"
+        ]
+
+        .astype(
+            str
         )
-    )
 
+        .apply(
+            normalizar_codigo
+        )
 
-    filtro &= tabelas[
-        "Municipio informado"
-    ].apply(
+        .eq(
+            codigo_normalizado
+        )
 
-        lambda x:
-
-            municipio_corresponde(
-                x,
-                municipio
-            )
-    )
-
-
-    encontrados = tabelas[
-        filtro
     ].copy()
 
 
-    if encontrados.empty:
-
-        return []
-
-
-    ativos = encontrados[
-
-        encontrados[
-            "Ativa"
-        ] == True
-    ]
-
-
-    if not ativos.empty:
-
-        encontrados = ativos
-
-
-    valores = sorted(
-
-        {
-
-            round(
-                float(v),
-                2
-            )
-
-            for v in encontrados[
-                "Valor oficial"
-            ].tolist()
-        }
-    )
-
-
-    return valores
+    return resultado
 
 
 # ============================================================
-# QUANTIDADE DA LINHA
+# VALIDAÇÃO DOS VALORES
 # ============================================================
 
-def quantidade_linha(linha):
+def quantidade_linha(
+    linha
+):
 
     campos = [
 
@@ -2157,6 +2378,7 @@ def quantidade_linha(linha):
     return sum(
 
         converter_numero(
+
             linha.get(
                 campo,
                 0
@@ -2167,50 +2389,184 @@ def quantidade_linha(linha):
     )
 
 
-def proximo(
-    valor1,
-    valor2,
-    tolerancia=0.02
+def valor_relatorio_confere(
+
+    valor_unitario,
+
+    valor_total,
+
+    quantidade,
+
+    valor_oficial
 ):
 
-    return (
 
-        abs(
-            float(valor1)
-            - float(valor2)
+    confere_unitario = (
+
+        valor_unitario > 0
+
+        and proximo(
+
+            valor_unitario,
+
+            valor_oficial
         )
-
-        <= tolerancia
     )
 
 
-# ============================================================
-# VALIDAÇÃO
-# ============================================================
+    if quantidade > 0:
 
-def validar_relatorio(
+
+        total_oficial = (
+
+            quantidade
+            * valor_oficial
+        )
+
+
+    else:
+
+
+        total_oficial = None
+
+
+    confere_total = (
+
+        total_oficial is not None
+
+        and valor_total > 0
+
+        and proximo(
+
+            valor_total,
+
+            total_oficial
+        )
+    )
+
+
+    return (
+
+        confere_unitario
+        or confere_total,
+
+        total_oficial
+    )
+
+
+def texto_referencias(
+    referencias
+):
+
+
+    if referencias.empty:
+
+        return ""
+
+
+    partes = []
+
+
+    referencias_ordenadas = referencias.sort_values(
+
+        [
+
+            "Competencia",
+
+            "Data tabela",
+
+            "Versao",
+
+            "Valor oficial"
+        ]
+    )
+
+
+    for _, referencia in referencias_ordenadas.iterrows():
+
+
+        partes.append(
+
+            f"{referencia['Competencia']} | "
+
+            f"{referencia['Versao']} | "
+
+            f"{referencia['Arquivo de origem']} | "
+
+            f"{formatar_moeda(referencia['Valor oficial'])}"
+        )
+
+
+    return " ; ".join(
+
+        dict.fromkeys(
+            partes
+        )
+    )
+
+
+def validar_relatorio_todas_tabelas(
+
     dados,
-    municipio,
-    competencia_inicial,
-    competencia_final,
+
+    data_inicial,
+
+    data_final,
+
     tabelas
 ):
 
 
-    resultados = []
+    referencias_periodo = tabelas_do_periodo(
 
+        tabelas,
 
-    duas_competencias = (
+        data_inicial,
 
-        competencia_inicial
-        != competencia_final
+        data_final
     )
+
+
+    if not referencias_periodo.empty:
+
+
+        ids_tabelas_periodo = set(
+
+            referencias_periodo[
+                "ID tabela"
+            ]
+
+            .dropna()
+
+            .astype(
+                str
+            )
+
+            .unique()
+
+            .tolist()
+        )
+
+
+    else:
+
+
+        ids_tabelas_periodo = set()
+
+
+    total_tabelas_periodo = len(
+        ids_tabelas_periodo
+    )
+
+
+    resultados = []
 
 
     for _, linha in dados.iterrows():
 
 
         codigo = normalizar_codigo(
+
             linha.get(
                 "Codigo",
                 ""
@@ -2223,7 +2579,7 @@ def validar_relatorio(
         )
 
 
-        valor_relatorio = converter_numero(
+        valor_unitario = converter_numero(
 
             linha.get(
                 "Valor unitario",
@@ -2232,7 +2588,7 @@ def validar_relatorio(
         )
 
 
-        total_relatorio = converter_numero(
+        valor_bruto = converter_numero(
 
             linha.get(
                 "Valor bruto",
@@ -2241,476 +2597,355 @@ def validar_relatorio(
         )
 
 
-        valores_1 = buscar_valores_oficiais(
+        status = "🟡 ATENÇÃO"
 
-            tabelas,
+        motivo = ""
 
-            competencia_inicial,
+        valores_oficiais_texto = ""
 
-            municipio,
+        tabelas_com_codigo = 0
 
-            codigo
-        )
-
-
-        if duas_competencias:
-
-            valores_2 = buscar_valores_oficiais(
-
-                tabelas,
-
-                competencia_final,
-
-                municipio,
-
-                codigo
-            )
-
-        else:
-
-            valores_2 = valores_1
-
-
-        oficial_1 = (
-
-            valores_1[0]
-
-            if len(valores_1) == 1
-
-            else None
-        )
-
-
-        oficial_2 = (
-
-            valores_2[0]
-
-            if len(valores_2) == 1
-
-            else None
-        )
-
+        tabelas_sem_codigo = total_tabelas_periodo
 
         valor_calculado = None
 
         diferenca = None
 
-        status = "🟡 ATENÇÃO"
-
-        motivo = ""
-
 
         # ----------------------------------------------------
-        # SEM CÓDIGO
+        # NÃO HÁ TABELAS DO PERÍODO
         # ----------------------------------------------------
 
-        if not codigo:
+        if total_tabelas_periodo == 0:
 
 
             motivo = (
-                "O relatório não trouxe código suficiente "
-                "para validação automática desta linha."
+
+                "Nenhuma tabela de referência foi cadastrada "
+                "para as competências do período do relatório."
             )
 
 
         # ----------------------------------------------------
-        # APENAS UMA COMPETÊNCIA
+        # RELATÓRIO SEM CÓDIGO
         # ----------------------------------------------------
 
-        elif not duas_competencias:
+        elif not codigo:
 
 
-            if len(valores_1) == 0:
+            motivo = (
 
-
-                status = "🔴 ERRO"
-
-                motivo = (
-                    "Código não encontrado na tabela ativa "
-                    "da competência."
-                )
-
-
-            elif len(valores_1) > 1:
-
-
-                motivo = (
-                    "Mais de um valor oficial foi encontrado "
-                    "para o mesmo código. Revisão manual necessária."
-                )
-
-
-            else:
-
-
-                valor_calculado = (
-
-                    quantidade
-                    * oficial_1
-
-                    if quantidade > 0
-
-                    else None
-                )
-
-
-                unidade_ok = (
-
-                    valor_relatorio > 0
-
-                    and proximo(
-                        valor_relatorio,
-                        oficial_1
-                    )
-                )
-
-
-                total_ok = (
-
-                    valor_calculado is not None
-
-                    and total_relatorio > 0
-
-                    and proximo(
-                        total_relatorio,
-                        valor_calculado
-                    )
-                )
-
-
-                if valor_relatorio > 0:
-
-
-                    if unidade_ok:
-
-
-                        if (
-                            total_relatorio > 0
-                            and not total_ok
-                        ):
-
-
-                            status = "🔴 ERRO"
-
-                            motivo = (
-                                "Valor unitário confere, mas o total "
-                                "não confere com quantidade × valor oficial."
-                            )
-
-
-                        else:
-
-
-                            status = "🟢 OK"
-
-                            motivo = (
-                                "Valor do relatório confere "
-                                "com a tabela oficial."
-                            )
-
-
-                    else:
-
-
-                        status = "🔴 ERRO"
-
-                        motivo = (
-                            "Valor unitário do relatório é diferente "
-                            "do valor oficial."
-                        )
-
-
-                elif (
-                    total_relatorio > 0
-                    and valor_calculado is not None
-                ):
-
-
-                    if total_ok:
-
-
-                        status = "🟢 OK"
-
-                        motivo = (
-                            "Total do relatório confere com "
-                            "quantidade × valor oficial."
-                        )
-
-
-                    else:
-
-
-                        status = "🔴 ERRO"
-
-                        motivo = (
-                            "Total do relatório não confere com "
-                            "quantidade × valor oficial."
-                        )
-
-
-                else:
-
-
-                    motivo = (
-                        "Código encontrado, mas não há valor "
-                        "suficiente no relatório para comparação automática."
-                    )
+                "O relatório não trouxe código suficiente "
+                "para validar automaticamente esta linha."
+            )
 
 
         # ----------------------------------------------------
-        # DUAS COMPETÊNCIAS
+        # EXISTE CÓDIGO
         # ----------------------------------------------------
 
         else:
 
 
-            if (
-                len(valores_1) == 0
-                and len(valores_2) == 0
-            ):
+            referencias = referencias_do_codigo(
+
+                referencias_periodo,
+
+                codigo
+            )
 
 
-                status = "🔴 ERRO"
+            valores_oficiais_texto = texto_referencias(
+                referencias
+            )
 
-                motivo = (
-                    "Código não encontrado em nenhuma "
-                    "das duas competências."
+
+            if not referencias.empty:
+
+
+                ids_com_codigo = set(
+
+                    referencias[
+                        "ID tabela"
+                    ]
+
+                    .dropna()
+
+                    .astype(
+                        str
+                    )
+
+                    .unique()
+
+                    .tolist()
                 )
-
-
-            elif (
-                len(valores_1) != 1
-                or len(valores_2) != 1
-            ):
-
-
-                motivo = (
-                    "Referência incompleta ou ambígua em uma "
-                    "das competências. Revisão manual necessária."
-                )
-
-
-            elif proximo(
-                oficial_1,
-                oficial_2
-            ):
-
-
-                valor_calculado = (
-
-                    quantidade
-                    * oficial_1
-
-                    if quantidade > 0
-
-                    else None
-                )
-
-
-                unidade_ok = (
-
-                    valor_relatorio > 0
-
-                    and proximo(
-                        valor_relatorio,
-                        oficial_1
-                    )
-                )
-
-
-                total_ok = (
-
-                    valor_calculado is not None
-
-                    and total_relatorio > 0
-
-                    and proximo(
-                        total_relatorio,
-                        valor_calculado
-                    )
-                )
-
-
-                if (
-                    valor_relatorio > 0
-                    and unidade_ok
-                    and (
-                        total_relatorio == 0
-                        or total_ok
-                    )
-                ):
-
-
-                    status = "🟢 OK"
-
-                    motivo = (
-                        "O valor oficial é igual nas duas "
-                        "competências e o relatório confere."
-                    )
-
-
-                elif (
-                    valor_relatorio == 0
-                    and total_relatorio > 0
-                    and total_ok
-                ):
-
-
-                    status = "🟢 OK"
-
-                    motivo = (
-                        "O valor oficial é igual nas duas "
-                        "competências e o total confere."
-                    )
-
-
-                elif (
-                    valor_relatorio == 0
-                    and total_relatorio == 0
-                ):
-
-
-                    motivo = (
-                        "As duas tabelas têm o mesmo valor, "
-                        "mas o relatório não trouxe valor "
-                        "suficiente para comparação."
-                    )
-
-
-                else:
-
-
-                    status = "🔴 ERRO"
-
-                    motivo = (
-                        "O valor oficial é igual nas duas "
-                        "competências, mas o relatório não confere."
-                    )
 
 
             else:
 
 
-                combina_1 = (
+                ids_com_codigo = set()
 
-                    valor_relatorio > 0
 
-                    and proximo(
-                        valor_relatorio,
-                        oficial_1
-                    )
+            tabelas_com_codigo = len(
+                ids_com_codigo
+            )
+
+
+            tabelas_sem_codigo = (
+
+                total_tabelas_periodo
+
+                - tabelas_com_codigo
+            )
+
+
+            # ------------------------------------------------
+            # CÓDIGO NÃO EXISTE EM NENHUMA TABELA
+            # ------------------------------------------------
+
+            if referencias.empty:
+
+
+                status = "🔴 ERRO"
+
+
+                motivo = (
+
+                    "Código não encontrado em nenhuma "
+                    "das tabelas cadastradas do período."
                 )
 
 
-                combina_2 = (
+            # ------------------------------------------------
+            # CÓDIGO NÃO EXISTE EM TODAS
+            # ------------------------------------------------
 
-                    valor_relatorio > 0
+            elif tabelas_sem_codigo > 0:
 
-                    and proximo(
-                        valor_relatorio,
-                        oficial_2
-                    )
+
+                valores = sorted(
+
+                    {
+
+                        round(
+                            float(valor),
+                            2
+                        )
+
+                        for valor in referencias[
+                            "Valor oficial"
+                        ].tolist()
+                    }
                 )
 
 
-                total_1 = (
-
-                    quantidade
-                    * oficial_1
-
-                    if quantidade > 0
-
-                    else None
-                )
+                combina_algum = False
 
 
-                total_2 = (
-
-                    quantidade
-                    * oficial_2
-
-                    if quantidade > 0
-
-                    else None
-                )
+                for valor in valores:
 
 
-                combina_total_1 = (
+                    combina, _ = valor_relatorio_confere(
 
-                    total_relatorio > 0
+                        valor_unitario,
 
-                    and total_1 is not None
+                        valor_bruto,
 
-                    and proximo(
-                        total_relatorio,
-                        total_1
-                    )
-                )
+                        quantidade,
 
-
-                combina_total_2 = (
-
-                    total_relatorio > 0
-
-                    and total_2 is not None
-
-                    and proximo(
-                        total_relatorio,
-                        total_2
-                    )
-                )
-
-
-                if (
-                    combina_1
-                    or combina_2
-                    or combina_total_1
-                    or combina_total_2
-                ):
-
-
-                    status = "🟡 ATENÇÃO"
-
-                    motivo = (
-                        "O valor confere com apenas uma das competências. "
-                        "Como o relatório não informa em qual mês o serviço "
-                        "ocorreu, exige validação humana."
+                        valor
                     )
 
 
-                elif (
-                    valor_relatorio == 0
-                    and total_relatorio == 0
-                ):
+                    if combina:
+
+
+                        combina_algum = True
+
+                        break
+
+
+                status = "🟡 ATENÇÃO"
+
+
+                if combina_algum:
 
 
                     motivo = (
-                        "As competências têm valores diferentes "
-                        "e o relatório não permite determinar "
-                        "qual valor aplicar."
+
+                        "O código aparece em algumas tabelas do período, "
+                        "mas não em todas. O valor do relatório coincide "
+                        "com pelo menos uma referência encontrada. "
+                        "É necessária validação humana."
                     )
 
 
                 else:
 
 
-                    status = "🔴 ERRO"
-
                     motivo = (
-                        "O valor do relatório não confere com "
-                        "nenhuma das duas competências."
+
+                        "O código aparece em algumas tabelas do período, "
+                        "mas não em todas. Como as versões não apresentam "
+                        "a mesma referência, é necessária validação humana."
                     )
 
 
+            # ------------------------------------------------
+            # CÓDIGO EXISTE EM TODAS AS TABELAS
+            # ------------------------------------------------
+
+            else:
+
+
+                valores = sorted(
+
+                    {
+
+                        round(
+                            float(valor),
+                            2
+                        )
+
+                        for valor in referencias[
+                            "Valor oficial"
+                        ].tolist()
+                    }
+                )
+
+
+                # --------------------------------------------
+                # MESMO VALOR EM TODAS AS TABELAS
+                # --------------------------------------------
+
+                if len(
+                    valores
+                ) == 1:
+
+
+                    oficial = valores[
+                        0
+                    ]
+
+
+                    confere, total_oficial = valor_relatorio_confere(
+
+                        valor_unitario,
+
+                        valor_bruto,
+
+                        quantidade,
+
+                        oficial
+                    )
+
+
+                    valor_calculado = total_oficial
+
+
+                    if confere:
+
+
+                        status = "🟢 OK"
+
+
+                        motivo = (
+
+                            "O código está presente em todas as tabelas "
+                            "do período, o valor oficial é igual em todas "
+                            "e o relatório confere."
+                        )
+
+
+                    else:
+
+
+                        status = "🔴 ERRO"
+
+
+                        motivo = (
+
+                            "O código está presente em todas as tabelas "
+                            "do período e o valor oficial é igual entre "
+                            "elas, mas o relatório não confere."
+                        )
+
+
+                # --------------------------------------------
+                # VALORES DIFERENTES ENTRE AS TABELAS
+                # --------------------------------------------
+
+                else:
+
+
+                    valores_que_conferem = []
+
+
+                    for valor in valores:
+
+
+                        combina, _ = valor_relatorio_confere(
+
+                            valor_unitario,
+
+                            valor_bruto,
+
+                            quantidade,
+
+                            valor
+                        )
+
+
+                        if combina:
+
+
+                            valores_que_conferem.append(
+                                valor
+                            )
+
+
+                    if valores_que_conferem:
+
+
+                        status = "🟡 ATENÇÃO"
+
+
+                        motivo = (
+
+                            "Foram encontrados valores oficiais diferentes "
+                            "entre as tabelas do período. O relatório coincide "
+                            "com pelo menos uma delas, portanto exige "
+                            "validação humana."
+                        )
+
+
+                    else:
+
+
+                        status = "🔴 ERRO"
+
+
+                        motivo = (
+
+                            "Foram encontrados valores oficiais diferentes "
+                            "entre as tabelas do período, e o valor do relatório "
+                            "não coincide com nenhuma referência encontrada."
+                        )
+
+
         if (
+
             valor_calculado is not None
-            and total_relatorio > 0
+
+            and valor_bruto > 0
         ):
 
 
             diferenca = (
 
-                total_relatorio
+                valor_bruto
+
                 - valor_calculado
             )
 
@@ -2752,21 +2987,23 @@ def validar_relatorio(
                 "Quantidade":
                     quantidade,
 
-                f"Oficial {competencia_inicial}":
-                    oficial_1,
-
-                f"Oficial {competencia_final}":
-                    (
-                        oficial_2
-                        if duas_competencias
-                        else oficial_1
-                    ),
-
                 "Valor unitário relatório":
-                    valor_relatorio,
+                    valor_unitario,
 
                 "Valor bruto relatório":
-                    total_relatorio,
+                    valor_bruto,
+
+                "Tabelas do período":
+                    total_tabelas_periodo,
+
+                "Tabelas com o código":
+                    tabelas_com_codigo,
+
+                "Tabelas sem o código":
+                    tabelas_sem_codigo,
+
+                "Referências encontradas":
+                    valores_oficiais_texto,
 
                 "Valor calculado oficial":
                     valor_calculado,
@@ -2792,8 +3029,13 @@ def validar_relatorio(
         )
 
 
-    return pd.DataFrame(
-        resultados
+    return (
+
+        pd.DataFrame(
+            resultados
+        ),
+
+        referencias_periodo
     )
 
 
@@ -2806,7 +3048,9 @@ def contar_profissionais_unicos(
 ):
 
     if dados.empty:
+
         return 0
+
 
     return dados[
         "CRM_ID"
@@ -2818,6 +3062,7 @@ def localizar_crms_com_varios_lancamentos(
 ):
 
     if dados.empty:
+
         return pd.DataFrame()
 
 
@@ -2846,7 +3091,9 @@ def localizar_crms_com_varios_lancamentos(
 
 
         nomes = list(
+
             dict.fromkeys(
+
                 grupo[
                     "Profissional"
                 ].tolist()
@@ -2861,7 +3108,9 @@ def localizar_crms_com_varios_lancamentos(
                 "CRM":
                     grupo.iloc[
                         0
-                    ]["CRM"],
+                    ][
+                        "CRM"
+                    ],
 
                 "Quantidade de lançamentos":
                     int(
@@ -2886,12 +3135,17 @@ def localizar_crms_com_varios_lancamentos(
 # ============================================================
 
 def mostrar_analise(
+
     dados,
+
     diagnostico
 ):
 
 
-    if dados is None or dados.empty:
+    if (
+        dados is None
+        or dados.empty
+    ):
 
 
         st.error(
@@ -2941,6 +3195,7 @@ def mostrar_analise(
 
 
     st.caption(
+
         "Profissionais únicos = CRMs diferentes. "
         "Lançamentos = linhas válidas encontradas."
     )
@@ -2999,8 +3254,11 @@ def mostrar_analise(
     consultas_faturamento = (
 
         consultas
+
         + procedimentos
+
         + exames
+
         + interconsultas
     )
 
@@ -3011,7 +3269,9 @@ def mostrar_analise(
 
 
     linha1[0].metric(
+
         "Plantões",
+
         formatar_numero(
             plantoes
         )
@@ -3019,7 +3279,9 @@ def mostrar_analise(
 
 
     linha1[1].metric(
+
         "Consultas",
+
         formatar_numero(
             consultas
         )
@@ -3027,7 +3289,9 @@ def mostrar_analise(
 
 
     linha1[2].metric(
+
         "Procedimentos",
+
         formatar_numero(
             procedimentos
         )
@@ -3035,7 +3299,9 @@ def mostrar_analise(
 
 
     linha1[3].metric(
+
         "Exames",
+
         formatar_numero(
             exames
         )
@@ -3048,7 +3314,9 @@ def mostrar_analise(
 
 
     linha2[0].metric(
+
         "Interconsultas",
+
         formatar_numero(
             interconsultas
         )
@@ -3056,7 +3324,9 @@ def mostrar_analise(
 
 
     linha2[1].metric(
+
         "Pacotes",
+
         formatar_numero(
             pacotes
         )
@@ -3064,7 +3334,9 @@ def mostrar_analise(
 
 
     linha2[2].metric(
+
         "Horas",
+
         formatar_numero(
             horas,
             2
@@ -3073,7 +3345,9 @@ def mostrar_analise(
 
 
     linha2[3].metric(
+
         "Consultas p/ faturamento",
+
         formatar_numero(
             consultas_faturamento
         )
@@ -3086,34 +3360,34 @@ def mostrar_analise(
 
 
     linha3[0].metric(
+
         "💰 Valor bruto encontrado",
+
         formatar_moeda(
             valor_bruto
         )
     )
 
 
-    if valor_final != 0:
+    linha3[1].metric(
 
+        "💰 Valor final encontrado",
 
-        linha3[1].metric(
-            "💰 Valor final encontrado",
+        (
+
             formatar_moeda(
                 valor_final
             )
+
+            if valor_final != 0
+
+            else "Não informado"
         )
-
-
-    else:
-
-
-        linha3[1].metric(
-            "💰 Valor final encontrado",
-            "Não informado"
-        )
+    )
 
 
     st.caption(
+
         "Consultas para faturamento = consultas + procedimentos "
         "+ exames + interconsultas. Pacotes permanecem separados."
     )
@@ -3183,6 +3457,7 @@ def mostrar_analise(
 
 
         st.info(
+
             "Alguns CRMs aparecem em mais de um lançamento. "
             "Isso não significa automaticamente duplicidade."
         )
@@ -3275,6 +3550,7 @@ if pagina == "🏠 Início":
 
 
     st.write(
+
         "Sistema para leitura, conferência, "
         "validação e faturamento de serviços médicos."
     )
@@ -3322,8 +3598,9 @@ elif pagina == "📋 Tabelas de referência":
 
 
     st.write(
-        "Cadastre aqui o PDF oficial do ICISMEP "
-        "usado para validar os valores do relatório."
+
+        "As tabelas são gerais: não existe cadastro por município. "
+        "Cadastre todas as versões existentes de cada competência."
     )
 
 
@@ -3336,8 +3613,10 @@ elif pagina == "📋 Tabelas de referência":
 
 
     st.info(
-        "Nesta versão, você baixa o PDF oficial no site "
-        "e envia aqui. O sistema identifica os códigos e valores."
+
+        "Na validação, o sistema considera TODAS as tabelas "
+        "cadastradas das competências que fazem parte do período "
+        "do relatório. Nenhuma versão substitui a anterior."
     )
 
 
@@ -3358,45 +3637,44 @@ elif pagina == "📋 Tabelas de referência":
     )
 
 
-    municipio_ref = col2.text_input(
+    data_tabela_ref = col2.date_input(
 
-        "Município / referência",
+        "Data da tabela / atualização",
 
-        placeholder="Ex.: Brumadinho ou FHEMIG"
+        value=date.today(),
+
+        key="data_tabela_referencia"
     )
 
 
     versao_ref = st.text_input(
 
-        "Identificação da versão",
+        "Versão / identificação",
 
-        placeholder="Ex.: Atualização II - setembro/2026"
+        placeholder=(
+            "Ex.: Tabela inicial, "
+            "Atualização I, Atualização II"
+        )
     )
 
 
-    ativa_ref = st.checkbox(
+    pdfs_ref = st.file_uploader(
 
-        "Usar esta como versão ativa da competência",
-
-        value=True
-    )
-
-
-    pdf_ref = st.file_uploader(
-
-        "PDF oficial do ICISMEP",
+        "PDF(s) oficial(is) desta versão",
 
         type=[
             "pdf"
         ],
 
-        key="pdf_referencia"
+        accept_multiple_files=True,
+
+        key="pdfs_referencia"
     )
 
 
     if st.button(
 
-        "📥 Ler e cadastrar tabela",
+        "📥 Cadastrar tabela(s)",
 
         type="primary"
     ):
@@ -3412,98 +3690,105 @@ elif pagina == "📋 Tabelas de referência":
             )
 
 
-        elif not municipio_ref.strip():
+        elif not pdfs_ref:
 
 
             st.error(
-                "Informe o município ou FHEMIG."
-            )
-
-
-        elif pdf_ref is None:
-
-
-            st.error(
-                "Envie o PDF oficial."
+                "Envie pelo menos um PDF oficial."
             )
 
 
         else:
 
 
+            total_arquivos = 0
+
+            total_codigos = 0
+
+            falhas = []
+
+
             with st.spinner(
-                "Lendo o PDF oficial..."
+                "Lendo as tabelas oficiais..."
             ):
 
 
-                dados_pdf = extrair_referencias_pdf(
-
-                    pdf_ref.getvalue()
-                )
+                for pdf_ref in pdfs_ref:
 
 
-            if dados_pdf.empty:
+                    try:
 
 
-                st.error(
-                    "Não consegui identificar códigos e "
-                    "valores nesse PDF."
-                )
+                        dados_pdf = extrair_referencias_pdf(
 
-
-            else:
-
-
-                quantidade = cadastrar_referencia(
-
-                    dados_pdf,
-
-                    competencia_ref.strip(),
-
-                    municipio_ref.strip(),
-
-                    versao_ref.strip(),
-
-                    pdf_ref.name,
-
-                    ativa_ref
-                )
-
-
-                if quantidade == 0:
-
-
-                    st.error(
-                        "O PDF foi lido, mas não encontrei "
-                        "a seção do município informado."
-                    )
-
-
-                    municipios = sorted(
-
-                        dados_pdf[
-                            "Municipio"
-                        ].dropna().unique().tolist()
-                    )
-
-
-                    with st.expander(
-                        "Ver referências identificadas no PDF"
-                    ):
-
-
-                        st.write(
-                            municipios
+                            pdf_ref.getvalue()
                         )
 
 
-                else:
+                        if dados_pdf.empty:
 
 
-                    st.success(
-                        f"✅ Tabela cadastrada: "
-                        f"{quantidade} códigos encontrados "
-                        f"para {municipio_ref}."
+                            falhas.append(
+
+                                f"{pdf_ref.name}: "
+                                f"nenhum código/valor reconhecido"
+                            )
+
+
+                            continue
+
+
+                        quantidade = cadastrar_tabela_referencia(
+
+                            dados_pdf,
+
+                            competencia_ref.strip(),
+
+                            data_tabela_ref,
+
+                            versao_ref,
+
+                            pdf_ref.name
+                        )
+
+
+                        total_arquivos += 1
+
+                        total_codigos += quantidade
+
+
+                    except Exception as erro:
+
+
+                        falhas.append(
+
+                            f"{pdf_ref.name}: {erro}"
+                        )
+
+
+            if total_arquivos > 0:
+
+
+                st.success(
+
+                    f"✅ {total_arquivos} tabela(s) cadastrada(s), "
+                    f"com {total_codigos} registros de referência."
+                )
+
+
+            if falhas:
+
+
+                st.warning(
+                    "Alguns arquivos não puderam ser lidos:"
+                )
+
+
+                for falha in falhas:
+
+
+                    st.write(
+                        f"• {falha}"
                     )
 
 
@@ -3519,7 +3804,7 @@ elif pagina == "📋 Tabelas de referência":
 
 
         st.subheader(
-            "Versões cadastradas nesta sessão"
+            "📚 Tabelas cadastradas nesta sessão"
         )
 
 
@@ -3533,13 +3818,13 @@ elif pagina == "📋 Tabelas de referência":
 
                     "Competencia",
 
-                    "Municipio informado",
+                    "Data tabela",
 
                     "Versao",
 
                     "Arquivo de origem",
 
-                    "Ativa"
+                    "ID tabela"
                 ],
 
                 dropna=False
@@ -3548,14 +3833,44 @@ elif pagina == "📋 Tabelas de referência":
             .size()
 
             .reset_index(
-                name="Códigos encontrados"
+
+                name="Referências encontradas"
             )
+        )
+
+
+        resumo = resumo.sort_values(
+
+            [
+
+                "Competencia",
+
+                "Data tabela",
+
+                "Versao",
+
+                "Arquivo de origem"
+            ]
         )
 
 
         st.dataframe(
 
-            resumo,
+            resumo[
+
+                [
+
+                    "Competencia",
+
+                    "Data tabela",
+
+                    "Versao",
+
+                    "Arquivo de origem",
+
+                    "Referências encontradas"
+                ]
+            ],
 
             use_container_width=True,
 
@@ -3564,19 +3879,13 @@ elif pagina == "📋 Tabelas de referência":
 
 
         with st.expander(
-            "Ver códigos da tabela ativa"
+            "Ver códigos e valores cadastrados"
         ):
 
 
             st.dataframe(
 
-                tabelas[
-
-                    tabelas[
-                        "Ativa"
-                    ] == True
-
-                ],
+                tabelas,
 
                 use_container_width=True,
 
@@ -3584,10 +3893,24 @@ elif pagina == "📋 Tabelas de referência":
             )
 
 
+        if st.button(
+            "🗑️ Limpar tabelas desta sessão"
+        ):
+
+
+            st.session_state[
+                "tabelas_referencia"
+            ] = pd.DataFrame()
+
+
+            st.rerun()
+
+
     st.warning(
-        "Por enquanto essas tabelas ficam na memória "
-        "da sessão do Streamlit. O armazenamento permanente "
-        "será adicionado depois."
+
+        "Por enquanto, as tabelas ficam salvas apenas durante "
+        "a sessão do Streamlit. O armazenamento permanente será "
+        "adicionado depois."
     )
 
 
@@ -3607,7 +3930,7 @@ elif pagina == "📤 Novo relatório":
 
         "Município",
 
-        placeholder="Ex.: Brumadinho ou FHEMIG"
+        placeholder="Ex.: Brumadinho"
     )
 
 
@@ -3654,19 +3977,32 @@ elif pagina == "📤 Novo relatório":
 
 
         st.error(
-            "A data final não pode ser anterior à data inicial."
+
+            "A data final não pode ser "
+            "anterior à data inicial."
         )
 
 
     else:
 
 
-        if competencia_inicial == competencia_final:
+        competencias = competencias_do_periodo(
+
+            data_inicial,
+
+            data_final
+        )
+
+
+        if len(
+            competencias
+        ) == 1:
 
 
             st.success(
+
                 f"✅ Competência identificada: "
-                f"{competencia_inicial}"
+                f"{competencias[0]}"
             )
 
 
@@ -3674,26 +4010,21 @@ elif pagina == "📤 Novo relatório":
 
 
             st.warning(
-                "⚠️ Este relatório envolve duas competências."
-            )
 
+                "⚠️ Este relatório envolve mais de uma "
+                "competência: "
 
-            st.write(
-                f"**Primeira competência:** "
-                f"{competencia_inicial}"
-            )
-
-
-            st.write(
-                f"**Segunda competência:** "
-                f"{competencia_final}"
+                + " | ".join(
+                    competencias
+                )
             )
 
 
             st.info(
-                "O sistema não dividirá as quantidades entre "
-                "os meses. Ele comparará o relatório integralmente "
-                "com as duas tabelas."
+
+                "As quantidades não serão divididas entre os meses. "
+                "A validação usará todas as tabelas cadastradas "
+                "dessas competências."
             )
 
 
@@ -3703,8 +4034,9 @@ elif pagina == "📤 Novo relatório":
 
 
         st.success(
+
             f"O relatório será lançado integralmente "
-            f"em {competencia_inicial}"
+            f"em {competencia_inicial}."
         )
 
 
@@ -3783,7 +4115,9 @@ elif pagina == "📤 Novo relatório":
 
 
                     st.error(
-                        "Corrija o período antes de analisar."
+
+                        "Corrija o período antes "
+                        "de analisar."
                     )
 
 
@@ -3791,7 +4125,8 @@ elif pagina == "📤 Novo relatório":
 
 
                     st.error(
-                        "Informe o município ou FHEMIG."
+
+                        "Informe o município do relatório."
                     )
 
 
@@ -3799,6 +4134,7 @@ elif pagina == "📤 Novo relatório":
 
 
                     st.error(
+
                         "Escolha pelo menos uma aba."
                     )
 
@@ -3847,6 +4183,16 @@ elif pagina == "📤 Novo relatório":
 
 
                     st.session_state[
+                        "data_inicial_relatorio"
+                    ] = data_inicial
+
+
+                    st.session_state[
+                        "data_final_relatorio"
+                    ] = data_final
+
+
+                    st.session_state[
                         "periodo_relatorio"
                     ] = (
 
@@ -3890,6 +4236,7 @@ elif pagina == "📤 Novo relatório":
 
 
             st.error(
+
                 "Não foi possível abrir ou analisar "
                 "o arquivo Excel."
             )
@@ -3921,6 +4268,7 @@ elif pagina == "🔍 Análise":
 
 
         st.info(
+
             "Primeiro envie e analise um relatório "
             "em 📤 Novo relatório."
         )
@@ -3934,7 +4282,9 @@ elif pagina == "🔍 Análise":
             "**Município:**",
 
             st.session_state.get(
+
                 "municipio_relatorio",
+
                 "Não informado"
             )
         )
@@ -3945,7 +4295,9 @@ elif pagina == "🔍 Análise":
             "**Responsável:**",
 
             st.session_state.get(
+
                 "responsavel_relatorio",
+
                 "Não informado"
             )
         )
@@ -3956,7 +4308,9 @@ elif pagina == "🔍 Análise":
             "**Período:**",
 
             st.session_state.get(
+
                 "periodo_relatorio",
+
                 ""
             )
         )
@@ -3967,7 +4321,9 @@ elif pagina == "🔍 Análise":
             "**Competência do faturamento:**",
 
             st.session_state.get(
+
                 "competencia_faturamento",
+
                 ""
             )
         )
@@ -4013,6 +4369,16 @@ elif pagina == "⚠️ Divergências":
     )
 
 
+    data_inicial = st.session_state.get(
+        "data_inicial_relatorio"
+    )
+
+
+    data_final = st.session_state.get(
+        "data_final_relatorio"
+    )
+
+
     if (
         dados is None
         or dados.empty
@@ -4020,6 +4386,7 @@ elif pagina == "⚠️ Divergências":
 
 
         st.info(
+
             "Primeiro analise um relatório "
             "em 📤 Novo relatório."
         )
@@ -4029,50 +4396,53 @@ elif pagina == "⚠️ Divergências":
 
 
         st.warning(
-            "Cadastre primeiro a(s) tabela(s) oficial(is) "
-            "em 📋 Tabelas de referência."
+
+            "Cadastre primeiro todas as tabelas oficiais "
+            "do período em 📋 Tabelas de referência."
+        )
+
+
+    elif (
+        data_inicial is None
+        or data_final is None
+    ):
+
+
+        st.warning(
+
+            "O período do relatório não está disponível. "
+            "Analise o arquivo novamente."
         )
 
 
     else:
 
 
-        municipio = st.session_state.get(
+        competencias = competencias_do_periodo(
 
-            "municipio_relatorio",
+            data_inicial,
 
-            ""
+            data_final
         )
 
 
-        comp1 = st.session_state.get(
+        st.write(
 
-            "competencia_inicial",
+            "**Competências analisadas:** "
 
-            st.session_state.get(
-                "competencia_faturamento",
-                ""
+            + " | ".join(
+                competencias
             )
         )
 
 
-        comp2 = st.session_state.get(
-
-            "competencia_final",
-
-            comp1
-        )
-
-
-        resultado = validar_relatorio(
+        resultado, referencias_periodo = validar_relatorio_todas_tabelas(
 
             dados,
 
-            municipio,
+            data_inicial,
 
-            comp1,
-
-            comp2,
+            data_final,
 
             tabelas
         )
@@ -4081,6 +4451,102 @@ elif pagina == "⚠️ Divergências":
         st.session_state[
             "resultado_validacao"
         ] = resultado
+
+
+        if not referencias_periodo.empty:
+
+
+            quantidade_tabelas = referencias_periodo[
+                "ID tabela"
+            ].nunique()
+
+
+        else:
+
+
+            quantidade_tabelas = 0
+
+
+        st.info(
+
+            f"Foram consideradas {quantidade_tabelas} "
+            f"tabela(s) de referência cadastrada(s) "
+            f"para as competências do período."
+        )
+
+
+        if quantidade_tabelas == 0:
+
+
+            st.error(
+
+                "Nenhuma tabela cadastrada corresponde "
+                "às competências do período."
+            )
+
+
+        else:
+
+
+            with st.expander(
+                "Ver tabelas consideradas nesta validação"
+            ):
+
+
+                resumo_referencias = (
+
+                    referencias_periodo[
+
+                        [
+
+                            "Competencia",
+
+                            "Data tabela",
+
+                            "Versao",
+
+                            "Arquivo de origem",
+
+                            "ID tabela"
+                        ]
+                    ]
+
+                    .drop_duplicates()
+
+                    .sort_values(
+
+                        [
+
+                            "Competencia",
+
+                            "Data tabela",
+
+                            "Versao"
+                        ]
+                    )
+                )
+
+
+                st.dataframe(
+
+                    resumo_referencias[
+
+                        [
+
+                            "Competencia",
+
+                            "Data tabela",
+
+                            "Versao",
+
+                            "Arquivo de origem"
+                        ]
+                    ],
+
+                    use_container_width=True,
+
+                    hide_index=True
+                )
 
 
         ok = int(
@@ -4188,9 +4654,9 @@ elif pagina == "⚠️ Divergências":
 
 
         st.caption(
+
             "O sistema não corrige valores automaticamente. "
-            "Itens em atenção e erro permanecem para "
-            "conferência humana."
+            "A validação humana continua sendo a etapa final."
         )
 
 
@@ -4218,8 +4684,9 @@ elif pagina == "✅ Validação":
 
 
         st.info(
+
             "Abra primeiro ⚠️ Divergências para executar "
-            "a conferência com as tabelas oficiais."
+            "a conferência com todas as tabelas do período."
         )
 
 
@@ -4227,6 +4694,7 @@ elif pagina == "✅ Validação":
 
 
         st.write(
+
             "A validação humana permanece "
             "como etapa final."
         )
@@ -4255,8 +4723,11 @@ elif pagina == "💰 Faturamento":
 
 
     st.write(
-        "A geração do faturamento será liberada "
-        "após a validação dos valores e divergências."
+
+        "A geração do faturamento será liberada depois "
+        "da validação das divergências. A competência de "
+        "faturamento continua sendo o mês da data inicial "
+        "do relatório."
     )
 
 
@@ -4273,15 +4744,17 @@ elif pagina == "📚 Histórico":
 
 
     st.write(
-        "Nesta etapa, as versões das tabelas ficam "
-        "preservadas durante a sessão."
+
+        "As diferentes versões das tabelas não substituem "
+        "umas às outras. Nesta fase, elas ficam preservadas "
+        "durante a sessão."
     )
 
 
     st.info(
-        "Depois vamos ligar esta área ao armazenamento "
-        "permanente para que os dados não sejam perdidos "
-        "quando o aplicativo reiniciar."
+
+        "Depois vamos adicionar armazenamento permanente "
+        "para relatórios, tabelas de referência e validações."
     )
 
 
