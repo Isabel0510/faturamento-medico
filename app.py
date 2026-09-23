@@ -1096,32 +1096,143 @@ for campo, colunas in colunas_producao.items():
             # REGISTRO FINAL
             # ------------------------------------------------
 
+                  # ----------------------------------------------------
+        # LER AS LINHAS DE PROFISSIONAIS
+        # ----------------------------------------------------
+
+        for numero_linha in range(
+            linha_cabecalho + 1,
+            linha_final
+        ):
+
+            nome = planilha.iat[
+                numero_linha,
+                coluna_profissional
+            ]
+
+            crm = planilha.iat[
+                numero_linha,
+                coluna_crm
+            ]
+
+            # Verifica se a linha realmente representa
+            # um profissional válido.
+            if not profissional_valido(
+                nome,
+                crm
+            ):
+                continue
+
+
+            # ------------------------------------------------
+            # PRODUÇÃO DA LINHA
+            # ------------------------------------------------
+
+            producao = {}
+
+            for campo, colunas in colunas_producao.items():
+
+                # --------------------------------------------
+                # CAMPOS DE QUANTIDADE
+                # --------------------------------------------
+
+                if campo in [
+                    "Plantoes",
+                    "Consultas",
+                    "Procedimentos",
+                    "Exames",
+                    "Interconsultas",
+                    "Pacotes",
+                    "Horas"
+                ]:
+
+                    total_campo = 0
+
+                    for numero_coluna in colunas:
+
+                        valor = planilha.iat[
+                            numero_linha,
+                            numero_coluna
+                        ]
+
+                        total_campo += converter_numero(
+                            valor
+                        )
+
+                    producao[campo] = total_campo
+
+
+                # --------------------------------------------
+                # VALOR UNITÁRIO
+                # --------------------------------------------
+
+                elif campo == "Valor unitario":
+
+                    valor_encontrado = 0
+
+                    for numero_coluna in colunas:
+
+                        valor = converter_numero(
+                            planilha.iat[
+                                numero_linha,
+                                numero_coluna
+                            ]
+                        )
+
+                        if valor != 0:
+
+                            valor_encontrado = valor
+                            break
+
+                    producao[campo] = valor_encontrado
+
+
+                # --------------------------------------------
+                # VALOR TOTAL
+                # --------------------------------------------
+
+                elif campo == "Valor total":
+
+                    valor_encontrado = 0
+
+                    for numero_coluna in colunas:
+
+                        valor = converter_numero(
+                            planilha.iat[
+                                numero_linha,
+                                numero_coluna
+                            ]
+                        )
+
+                        if valor != 0:
+
+                            valor_encontrado = valor
+                            break
+
+                    producao[campo] = valor_encontrado
+
+
+            # ------------------------------------------------
+            # REGISTRO FINAL DO PROFISSIONAL
+            # ------------------------------------------------
+
             registros.append(
-
                 {
+                    "Profissional": str(nome).strip(),
 
-                    "Profissional":
-                        str(nome).strip(),
+                    "CRM": limpar_crm(crm),
 
-                    "CRM":
-                        limpar_crm(crm),
+                    "CRM_ID": chave_crm(crm),
 
-                    "CRM_ID":
-                        chave_crm(crm),
+                    "Arquivo": nome_arquivo,
 
-                    "Arquivo":
-                        nome_arquivo,
+                    "Aba": nome_aba,
 
-                    "Aba":
-                        nome_aba,
-
-                    "Linha do Excel":
-                        numero_linha + 1,
+                    "Linha do Excel": numero_linha + 1,
 
                     **producao
                 }
             )
-
 
     dados = pd.DataFrame(
         registros
