@@ -7,12 +7,14 @@ from difflib import SequenceMatcher
 import pandas as pd
 import pdfplumber
 import streamlit as st
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 # ============================================================
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "1.9"
+VERSAO = "2.0"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -169,20 +171,23 @@ def classificar_unidade_medida(valor):
     if "exame" in t: return "Exames"
     if "consulta" in t: return "Consultas"
     if t == "hora" or "horas" in t or t.startswith("hora "): return "Horas"
+    if t == "mes" or "mensal" in t or t.startswith("mes "): return "Meses"
+    if t == "dia" or "diaria" in t or t.startswith("dia "): return "Dias"
     return None
 
 
 def unidade_por_campo(campo):
     return {
         "Plantoes": "PLANTÃO", "Consultas": "CONSULTA", "Procedimentos": "PROCEDIMENTO",
-        "Exames": "EXAME", "Interconsultas": "INTERCONSULTA", "Pacotes": "PACOTE", "Horas": "HORA"
+        "Exames": "EXAME", "Interconsultas": "INTERCONSULTA", "Pacotes": "PACOTE", "Horas": "HORA",
+        "Meses": "MÊS", "Dias": "DIA"
     }.get(campo, "")
 
 
 def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
     resultado = {k: [] for k in [
         "Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas",
-        "Pacotes", "Horas", "Valor unitario", "Valor bruto", "Valor final"
+        "Pacotes", "Horas", "Meses", "Dias", "Valor unitario", "Valor bruto", "Valor final"
     ]}
     fim = min(linha_cabecalho + 6, len(planilha))
 
@@ -198,6 +203,8 @@ def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
             if (("quant de consulta" in t or "quant consulta" in t or "qtd consulta" in t or t == "consultas") and "interconsulta" not in t and "pacote" not in t): resultado["Consultas"].append(coluna)
             if "quant de procedimento" in t or "quant procedimento" in t or "qtd procedimento" in t or t == "procedimentos": resultado["Procedimentos"].append(coluna)
             if "quant de exame" in t or "quant exame" in t or "qtd exame" in t or t == "exames": resultado["Exames"].append(coluna)
+            if "quant de mes" in t or "quant mes" in t or "qtd mes" in t or t == "meses": resultado["Meses"].append(coluna)
+            if "quant de dia" in t or "quant dia" in t or "qtd dia" in t or t == "dias": resultado["Dias"].append(coluna)
             if any(x in t for x in ["valor da hora", "valor do plantao", "valor da consulta", "valor consulta", "valor do procedimento", "valor procedimento", "valor do exame", "valor da interconsulta", "valor do pacote"]) or t in ["valor unit", "valor unitario"]:
                 resultado["Valor unitario"].append(coluna)
             if t in ["valor total final", "valor final", "valor liquido"]: resultado["Valor final"].append(coluna)
@@ -254,7 +261,7 @@ def encontrar_coluna_valor_associada(planilha, linha_cabecalho, coluna_quantidad
 
 def extrair_atividades_largas(planilha, numero_linha, linha_cabecalho, colunas_producao, nome, crm, nome_arquivo, nome_aba):
     atividades = []
-    for campo in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas"]:
+    for campo in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]:
         for coluna_qtd in colunas_producao[campo]:
             quantidade = converter_numero(planilha.iat[numero_linha, coluna_qtd])
             if quantidade == 0:
@@ -317,7 +324,7 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
             if not profissional_valido(nome, crm):
                 continue
 
-            producao = {k: 0.0 for k in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas"]}
+            producao = {k: 0.0 for k in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]}
 
             # Modelo largo: mantém os totais que já estavam funcionando.
             for campo in producao:
@@ -993,6 +1000,261 @@ def mostrar_analise(dados, atividades, diagnostico):
         st.dataframe(diagnostico, use_container_width=True, hide_index=True)
 
 # ============================================================
+# FATURAMENTO AUTOMÁTICO
+# ============================================================
+
+def mes_nome_portugues(numero_mes):
+    nomes = {
+        1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
+        5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+        9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO",
+    }
+    return nomes.get(int(numero_mes), "")
+
+
+def somar_coluna_segura(dados, coluna):
+    if dados is None or dados.empty or coluna not in dados.columns:
+        return 0.0
+    return float(pd.to_numeric(dados[coluna], errors="coerce").fillna(0).sum())
+
+
+def calcular_valor_total_faturamento(atividades, dados):
+    """
+    Calcula o valor bruto a lançar na coluna 'Valor total'.
+
+    Prioridade por atividade:
+    1) Valor bruto existente no relatório;
+    2) Quantidade x valor unitário.
+    """
+    total = 0.0
+
+    if atividades is not None and not atividades.empty:
+        for _, linha in atividades.iterrows():
+            valor_bruto = converter_numero(linha.get("Valor bruto", 0))
+            quantidade = converter_numero(linha.get("Quantidade", 0))
+            valor_unitario = converter_numero(linha.get("Valor unitario", 0))
+
+            if valor_bruto > 0:
+                total += valor_bruto
+            elif quantidade > 0 and valor_unitario > 0:
+                total += quantidade * valor_unitario
+
+    if total > 0:
+        return round(total, 2)
+
+    # Fallback para modelos em que só conseguimos o valor bruto por linha.
+    return round(somar_coluna_segura(dados, "Valor bruto"), 2)
+
+
+def resumo_faturamento(dados, atividades):
+    consultas_faturamento = (
+        somar_coluna_segura(dados, "Consultas")
+        + somar_coluna_segura(dados, "Procedimentos")
+        + somar_coluna_segura(dados, "Exames")
+        + somar_coluna_segura(dados, "Interconsultas")
+    )
+
+    profissionais = 0
+    if dados is not None and not dados.empty and "CRM_ID" in dados.columns:
+        profissionais = int(dados["CRM_ID"].astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    return {
+        "Valor total": calcular_valor_total_faturamento(atividades, dados),
+        "Plantoes": somar_coluna_segura(dados, "Plantoes"),
+        "Consultas faturamento": consultas_faturamento,
+        "Horas": somar_coluna_segura(dados, "Horas"),
+        "Meses": somar_coluna_segura(dados, "Meses"),
+        "Pacotes": somar_coluna_segura(dados, "Pacotes"),
+        "Dias": somar_coluna_segura(dados, "Dias"),
+        "Profissionais": profissionais,
+    }
+
+
+def localizar_bloco_mes_planilha(arquivo_bytes, competencia):
+    """Localiza o bloco do mês e as linhas de entes/municípios na planilha anual."""
+    mes, ano = [int(x) for x in competencia.split("/")]
+    nome_mes = mes_nome_portugues(mes)
+
+    workbook = load_workbook(io.BytesIO(arquivo_bytes), data_only=False)
+
+    nome_aba = str(ano) if str(ano) in workbook.sheetnames else workbook.sheetnames[0]
+    ws = workbook[nome_aba]
+
+    linha_mes = None
+    for linha in range(1, ws.max_row + 1):
+        if normalizar_texto(ws.cell(linha, 2).value) == normalizar_texto(nome_mes):
+            linha_mes = linha
+            break
+
+    if linha_mes is None:
+        raise ValueError(f"Não encontrei o mês {nome_mes} na planilha de faturamento.")
+
+    linha_cabecalho = None
+    for linha in range(linha_mes + 1, min(linha_mes + 10, ws.max_row) + 1):
+        textos = [normalizar_texto(ws.cell(linha, coluna).value) for coluna in range(2, 18)]
+        if any("valor total" == t for t in textos) and any("pl realizados" in t for t in textos):
+            linha_cabecalho = linha
+            break
+
+    if linha_cabecalho is None:
+        # Na planilha enviada, o cabeçalho fica duas linhas após o nome do mês.
+        linha_cabecalho = linha_mes + 2
+
+    linha_inicio = linha_cabecalho + 1
+    linha_subtotal = None
+    linha_total = None
+    entidades = []
+
+    for linha in range(linha_inicio, ws.max_row + 1):
+        nome = ws.cell(linha, 2).value
+        nome_n = normalizar_texto(nome)
+
+        if nome_n.startswith("sub total"):
+            linha_subtotal = linha
+            continue
+
+        if nome_n.startswith("total geral"):
+            linha_total = linha
+            break
+
+        # Se começou outro mês antes de encontrar o total, encerra o bloco.
+        if nome_n in {normalizar_texto(mes_nome_portugues(i)) for i in range(1, 13)}:
+            break
+
+        if nome_n:
+            entidades.append((linha, str(nome).strip()))
+
+    if linha_subtotal is None:
+        raise ValueError("Não encontrei a linha SUB TOTAL do mês selecionado.")
+
+    return {
+        "workbook": workbook,
+        "sheet_name": nome_aba,
+        "linha_mes": linha_mes,
+        "linha_cabecalho": linha_cabecalho,
+        "linha_inicio": linha_inicio,
+        "linha_subtotal": linha_subtotal,
+        "linha_total": linha_total,
+        "entidades": entidades,
+    }
+
+
+def sugerir_entidade_faturamento(entidades, municipio):
+    if not entidades:
+        return None
+
+    alvo = normalizar_texto(municipio)
+
+    # Correspondência exata primeiro.
+    for _, nome in entidades:
+        if normalizar_texto(nome) == alvo:
+            return nome
+
+    # FHEMIG normalmente é lançado na linha FHEMIG - BH.
+    if "fhemig" in alvo:
+        for _, nome in entidades:
+            if normalizar_texto(nome) == "fhemig bh":
+                return nome
+
+    # Correspondência parcial.
+    for _, nome in entidades:
+        nome_n = normalizar_texto(nome)
+        if alvo and (alvo in nome_n or nome_n in alvo):
+            return nome
+
+    return entidades[0][1]
+
+
+def ler_linha_atual_faturamento(arquivo_bytes, competencia, entidade):
+    bloco = localizar_bloco_mes_planilha(arquivo_bytes, competencia)
+    ws = bloco["workbook"][bloco["sheet_name"]]
+
+    linha_alvo = None
+    for linha, nome in bloco["entidades"]:
+        if normalizar_texto(nome) == normalizar_texto(entidade):
+            linha_alvo = linha
+            break
+
+    if linha_alvo is None:
+        raise ValueError("Não encontrei a linha selecionada na planilha de faturamento.")
+
+    return {
+        "linha": linha_alvo,
+        "Valor total atual": ws.cell(linha_alvo, 3).value,
+        "Plantões atuais": ws.cell(linha_alvo, 11).value,
+        "Consultas atuais": ws.cell(linha_alvo, 12).value,
+        "Horas atuais": ws.cell(linha_alvo, 13).value,
+        "Meses atuais": ws.cell(linha_alvo, 14).value,
+        "Pacotes atuais": ws.cell(linha_alvo, 15).value,
+        "Dias atuais": ws.cell(linha_alvo, 16).value,
+        "Profissionais atuais": ws.cell(linha_alvo, 17).value,
+    }
+
+
+def gerar_planilha_faturamento(arquivo_bytes, competencia, entidade, resumo, aplicar_calculos=True):
+    bloco = localizar_bloco_mes_planilha(arquivo_bytes, competencia)
+    workbook = bloco["workbook"]
+    ws = workbook[bloco["sheet_name"]]
+
+    linha_alvo = None
+    for linha, nome in bloco["entidades"]:
+        if normalizar_texto(nome) == normalizar_texto(entidade):
+            linha_alvo = linha
+            break
+
+    if linha_alvo is None:
+        raise ValueError("Não encontrei a linha selecionada na planilha de faturamento.")
+
+    # C = Valor total
+    ws.cell(linha_alvo, 3).value = float(resumo["Valor total"])
+
+    # D a J seguem o padrão financeiro observado na planilha atual.
+    # O usuário pode desmarcar essa opção e manter somente produção + valor total.
+    if aplicar_calculos:
+        ws.cell(linha_alvo, 4).value = f"=C{linha_alvo}*98.5%"
+        ws.cell(linha_alvo, 5).value = f"=C{linha_alvo}*1%"
+        ws.cell(linha_alvo, 6).value = f"=C{linha_alvo}*96.5%"
+        ws.cell(linha_alvo, 7).value = f"=F{linha_alvo}*3.5%"
+        ws.cell(linha_alvo, 8).value = f"=F{linha_alvo}*1.5%"
+        ws.cell(linha_alvo, 9).value = f"=F{linha_alvo}-G{linha_alvo}-H{linha_alvo}"
+        ws.cell(linha_alvo, 10).value = f"=G{linha_alvo}+H{linha_alvo}"
+
+    # K a Q = produção
+    ws.cell(linha_alvo, 11).value = float(resumo["Plantoes"])
+    ws.cell(linha_alvo, 12).value = float(resumo["Consultas faturamento"])
+    ws.cell(linha_alvo, 13).value = float(resumo["Horas"])
+    ws.cell(linha_alvo, 14).value = float(resumo["Meses"])
+    ws.cell(linha_alvo, 15).value = float(resumo["Pacotes"])
+    ws.cell(linha_alvo, 16).value = float(resumo["Dias"])
+    ws.cell(linha_alvo, 17).value = int(resumo["Profissionais"])
+
+    # Atualiza SUB TOTAL e TOTAL GERAL do mês.
+    fim_dados = bloco["linha_subtotal"] - 1
+    subtotal = bloco["linha_subtotal"]
+    total_geral = bloco["linha_total"]
+
+    for coluna in range(3, 18):
+        letra = get_column_letter(coluna)
+        ws.cell(subtotal, coluna).value = f"=SUM({letra}{bloco['linha_inicio']}:{letra}{fim_dados})"
+
+        if total_geral is not None:
+            ws.cell(total_geral, coluna).value = f"={letra}{subtotal}"
+
+    # Solicita recálculo quando o arquivo for aberto no Excel.
+    try:
+        workbook.calculation.fullCalcOnLoad = True
+        workbook.calculation.forceFullCalc = True
+        workbook.calculation.calcMode = "auto"
+    except Exception:
+        pass
+
+    saida = io.BytesIO()
+    workbook.save(saida)
+    saida.seek(0)
+    return saida.getvalue(), linha_alvo
+
+
+# ============================================================
 # MENU
 # ============================================================
 st.sidebar.title("📊 Faturamento Médico")
@@ -1181,7 +1443,138 @@ elif pagina == "✅ Validação":
 
 elif pagina == "💰 Faturamento":
     st.title("💰 Faturamento")
-    st.write("A geração do faturamento será liberada após a validação das divergências.")
+
+    dados = st.session_state.get("dados_relatorio", pd.DataFrame())
+    atividades = st.session_state.get("atividades_relatorio", pd.DataFrame())
+    competencia = st.session_state.get("competencia_faturamento", "")
+    municipio = st.session_state.get("municipio_relatorio", "")
+
+    if dados is None or dados.empty:
+        st.info("Primeiro envie e analise um relatório em 📤 Novo relatório.")
+    else:
+        resumo = resumo_faturamento(dados, atividades)
+
+        st.write("**Competência de faturamento:**", competencia)
+        st.write("**Município / ente do relatório:**", municipio)
+
+        st.subheader("📊 Dados que serão lançados")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Valor total", formatar_moeda(resumo["Valor total"]))
+        c2.metric("Plantões", formatar_numero(resumo["Plantoes"], 2))
+        c3.metric("Consultas", formatar_numero(resumo["Consultas faturamento"], 2))
+        c4.metric("Horas", formatar_numero(resumo["Horas"], 2))
+
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("Quant. mês", formatar_numero(resumo["Meses"], 2))
+        c6.metric("Pacote consultas", formatar_numero(resumo["Pacotes"], 2))
+        c7.metric("Quant. dia", formatar_numero(resumo["Dias"], 2))
+        c8.metric("Profissionais únicos", resumo["Profissionais"])
+
+        st.caption(
+            "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
+            "Nº PROF. MÉDICOS usa CRMs únicos."
+        )
+
+        st.subheader("📎 Planilha oficial de faturamento")
+
+        arquivo_faturamento = st.file_uploader(
+            "Envie a planilha FATURAMENTO DE PLANTÕES 2026.xlsx",
+            type=["xlsx"],
+            key="arquivo_faturamento"
+        )
+
+        if arquivo_faturamento is not None:
+            try:
+                faturamento_bytes = arquivo_faturamento.getvalue()
+                bloco = localizar_bloco_mes_planilha(faturamento_bytes, competencia)
+                opcoes = [nome for _, nome in bloco["entidades"]]
+                sugestao = sugerir_entidade_faturamento(opcoes and bloco["entidades"] or [], municipio)
+                indice = opcoes.index(sugestao) if sugestao in opcoes else 0
+
+                entidade = st.selectbox(
+                    "Linha que receberá o faturamento",
+                    options=opcoes,
+                    index=indice
+                )
+
+                atual = ler_linha_atual_faturamento(
+                    faturamento_bytes,
+                    competencia,
+                    entidade
+                )
+
+                existe_dado = any(
+                    converter_numero(atual.get(campo, 0)) != 0
+                    for campo in [
+                        "Valor total atual", "Plantões atuais", "Consultas atuais",
+                        "Horas atuais", "Meses atuais", "Pacotes atuais",
+                        "Dias atuais", "Profissionais atuais"
+                    ]
+                )
+
+                with st.expander("Ver o que já existe nessa linha"):
+                    st.write(atual)
+
+                if existe_dado:
+                    st.warning(
+                        "⚠️ Essa linha já possui dados. O sistema só substituirá os valores "
+                        "se você marcar a confirmação abaixo."
+                    )
+                    confirmar_substituicao = st.checkbox(
+                        "Confirmo que desejo substituir os dados existentes desta linha",
+                        value=False
+                    )
+                else:
+                    confirmar_substituicao = True
+                    st.success("✅ A linha selecionada está sem faturamento lançado.")
+
+                aplicar_calculos = st.checkbox(
+                    "Aplicar automaticamente os cálculos financeiros das colunas D a J",
+                    value=True,
+                    help=(
+                        "Usa o padrão atual da planilha: D=98,5% do total; E=1%; "
+                        "F=96,5%; G=3,5% de F; H=1,5% de F; I=F-G-H; J=G+H."
+                    )
+                )
+
+                st.info(
+                    "O sistema gera uma NOVA cópia da planilha para download. "
+                    "O arquivo que você enviou não é alterado no seu computador."
+                )
+
+                if st.button("💰 Gerar planilha de faturamento", type="primary"):
+                    if not confirmar_substituicao:
+                        st.error("Marque a confirmação antes de substituir uma linha que já possui dados.")
+                    else:
+                        arquivo_pronto, linha_gravada = gerar_planilha_faturamento(
+                            faturamento_bytes,
+                            competencia,
+                            entidade,
+                            resumo,
+                            aplicar_calculos
+                        )
+
+                        nome_saida = (
+                            f"FATURAMENTO_ATUALIZADO_{competencia.replace('/', '-')}_"
+                            f"{normalizar_texto(entidade).replace(' ', '_').upper()}.xlsx"
+                        )
+
+                        st.success(
+                            f"✅ Faturamento preparado na linha {linha_gravada} - {entidade}."
+                        )
+
+                        st.download_button(
+                            "⬇️ Baixar planilha atualizada",
+                            data=arquivo_pronto,
+                            file_name=nome_saida,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+
+            except Exception as erro:
+                st.error("Não consegui preparar a planilha de faturamento.")
+                with st.expander("Ver detalhes do erro"):
+                    st.code(str(erro))
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
