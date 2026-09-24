@@ -2149,6 +2149,13 @@ elif pagina == "📂 Base de relatórios":
                         with st.expander("Ver detalhes do erro"):
                             st.code(str(erro))
 
+    except Exception as erro:
+        st.error(
+            "Não consegui carregar a base de relatórios."
+        )
+        with st.expander("Ver detalhes do erro"):
+            st.code(str(erro))
+
 elif pagina == "🔍 Análise":
     st.title("🔍 Análise")
     if "dados_relatorio" not in st.session_state:
@@ -2803,4 +2810,3 @@ elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
     st.write(f"Versão atual: {VERSAO}")
     st.code(URL_ICISMEP)
-
