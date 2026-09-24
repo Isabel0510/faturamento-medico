@@ -1,7 +1,6 @@
 import io
 import re
 import unicodedata
-import hmac
 from datetime import date
 from difflib import SequenceMatcher
 
@@ -16,7 +15,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.2"
+VERSAO = "2.3"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -86,7 +85,7 @@ def proximo(a, b, tolerancia=0.02):
 
 
 # ============================================================
-# LOGIN E PERFIS DE ACESSO
+# IDENTIFICAÇÃO DO USUÁRIO E PERFIS DE ACESSO
 # ============================================================
 def usuarios_configurados():
     try:
@@ -95,22 +94,17 @@ def usuarios_configurados():
         return {}
 
 
-def autenticar_usuario(login, senha):
+def obter_usuario_por_nome(nome_selecionado):
     usuarios = usuarios_configurados()
-    login_n = str(login or "").strip().lower()
+    nome_n = str(nome_selecionado or "").strip()
 
     for usuario_id, config in usuarios.items():
-        if str(usuario_id).strip().lower() != login_n:
-            continue
+        nome = str(config.get("nome", usuario_id)).strip()
 
-        senha_cadastrada = str(config.get("senha", ""))
-        if not senha_cadastrada:
-            return None
-
-        if hmac.compare_digest(str(senha), senha_cadastrada):
+        if nome == nome_n:
             return {
                 "login": str(usuario_id),
-                "nome": str(config.get("nome", usuario_id)),
+                "nome": nome,
                 "perfil": str(config.get("perfil", "Lançador")),
             }
 
@@ -139,32 +133,56 @@ def exigir_login():
     if st.session_state.get("autenticado", False):
         return
 
-    st.title("🔐 Acesso ao sistema")
-    st.write("Entre com seu usuário e senha para continuar.")
+    st.title("👤 Quem é você?")
+    st.write(
+        "Selecione seu nome para continuar. "
+        "Essa identificação será usada no histórico dos lançamentos."
+    )
 
     usuarios = usuarios_configurados()
+
     if not usuarios:
         st.error("Nenhum usuário foi configurado nos Secrets do Streamlit.")
         st.code(
-            '[usuarios.admin]\nnome = "Administrador"\nsenha = "SUA_SENHA"\nperfil = "Administrador"'
+            '[usuarios.isabel]\n'
+            'nome = "Isabel Resende de Almeida"\n'
+            'perfil = "Administrador"'
         )
         st.stop()
 
-    with st.form("form_login"):
-        login = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
-        entrar = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+    nomes = sorted(
+        [
+            str(config.get("nome", usuario_id)).strip()
+            for usuario_id, config in usuarios.items()
+        ]
+    )
 
-    if entrar:
-        usuario = autenticar_usuario(login, senha)
-        if usuario is None:
-            st.error("Usuário ou senha inválidos.")
+    nome_selecionado = st.selectbox(
+        "Nome",
+        ["Selecione seu nome..."] + nomes,
+        index=0,
+    )
+
+    continuar = st.button(
+        "Continuar",
+        type="primary",
+        use_container_width=True,
+    )
+
+    if continuar:
+        if nome_selecionado == "Selecione seu nome...":
+            st.warning("Selecione seu nome para continuar.")
         else:
-            st.session_state["autenticado"] = True
-            st.session_state["usuario_login"] = usuario["login"]
-            st.session_state["usuario_nome"] = usuario["nome"]
-            st.session_state["usuario_perfil"] = usuario["perfil"]
-            st.rerun()
+            usuario = obter_usuario_por_nome(nome_selecionado)
+
+            if usuario is None:
+                st.error("Não foi possível identificar o usuário selecionado.")
+            else:
+                st.session_state["autenticado"] = True
+                st.session_state["usuario_login"] = usuario["login"]
+                st.session_state["usuario_nome"] = usuario["nome"]
+                st.session_state["usuario_perfil"] = usuario["perfil"]
+                st.rerun()
 
     st.stop()
 
@@ -1318,11 +1336,11 @@ def gerar_planilha_faturamento(arquivo_bytes, competencia, entidade, resumo, apl
     # D a J seguem o padrão financeiro observado na planilha atual.
     # O usuário pode desmarcar essa opção e manter somente produção + valor total.
     if aplicar_calculos:
-        ws.cell(linha_alvo, 4).value = f"=C{linha_alvo}*98.5%"
-        ws.cell(linha_alvo, 5).value = f"=C{linha_alvo}*1%"
-        ws.cell(linha_alvo, 6).value = f"=C{linha_alvo}*96.5%"
-        ws.cell(linha_alvo, 7).value = f"=F{linha_alvo}*3.5%"
-        ws.cell(linha_alvo, 8).value = f"=F{linha_alvo}*1.5%"
+        ws.cell(linha_alvo, 4).value = f"=C{linha_alvo}-(C{linha_alvo}*1.5%)"
+        ws.cell(linha_alvo, 5).value = f"=C{linha_alvo}-(C{linha_alvo}*0.99)"
+        ws.cell(linha_alvo, 6).value = f"=C{linha_alvo}-(C{linha_alvo}*3.5%)"
+        ws.cell(linha_alvo, 7).value = f"=F{linha_alvo}*3.5/100"
+        ws.cell(linha_alvo, 8).value = f"=(F{linha_alvo})*1.5/100"
         ws.cell(linha_alvo, 9).value = f"=F{linha_alvo}-G{linha_alvo}-H{linha_alvo}"
         ws.cell(linha_alvo, 10).value = f"=G{linha_alvo}+H{linha_alvo}"
 
