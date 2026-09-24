@@ -1,5 +1,6 @@
 import io
 import base64
+import hashlib
 import uuid
 import re
 import unicodedata
@@ -17,7 +18,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.5.1"
+VERSAO = "2.5.2"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 VERSAO_BACKEND_ESPERADA = "2.5.1"
 
@@ -257,7 +258,17 @@ def chamar_api_apps_script(payload, timeout=90):
     return retorno
 
 
-def verificar_backend_base():
+def verificar_backend_base(forcar=False):
+    if (
+        not forcar
+        and st.session_state.get("_backend_verificado", False)
+        and st.session_state.get("_backend_versao") == VERSAO_BACKEND_ESPERADA
+    ):
+        return {
+            "sucesso": True,
+            "backend_version": st.session_state.get("_backend_versao"),
+        }
+
     url, chave = conexao_apps_script()
     if not url or not chave:
         raise RuntimeError(
@@ -304,7 +315,27 @@ def verificar_backend_base():
             + detalhe
         )
 
+    st.session_state["_backend_verificado"] = True
+    st.session_state["_backend_versao"] = versao_backend
     return retorno
+
+
+def obter_abas_upload(arquivo):
+    arquivo_bytes = arquivo.getvalue()
+    assinatura = hashlib.sha256(arquivo_bytes).hexdigest()
+
+    cache = st.session_state.setdefault(
+        "_cache_abas_excel",
+        {}
+    )
+
+    if assinatura not in cache:
+        excel = pd.ExcelFile(
+            io.BytesIO(arquivo_bytes)
+        )
+        cache[assinatura] = excel.sheet_names
+
+    return list(cache[assinatura])
 
 
 def listar_relatorios_base(atualizar=False):
@@ -324,18 +355,39 @@ def limpar_cache_base():
 
 def salvar_relatorio_base(
     relatorio_id,
-    arquivo,
-    municipio,
-    data_inicial,
-    data_final,
-    abas,
-    observacoes,
-    resumo,
+    arquivo=None,
+    municipio="",
+    data_inicial=None,
+    data_final=None,
+    abas=None,
+    observacoes="",
+    resumo=None,
+    arquivo_bytes=None,
+    arquivo_nome=None,
+    arquivo_mime=None,
 ):
     verificar_backend_base()
 
+    if arquivo_bytes is None:
+        if arquivo is None:
+            raise RuntimeError("Arquivo do relatório não informado.")
+        arquivo_bytes = arquivo.getvalue()
+        arquivo_nome = arquivo.name
+        arquivo_mime = (
+            arquivo.type
+            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    arquivo_nome = arquivo_nome or "relatorio.xlsx"
+    arquivo_mime = (
+        arquivo_mime
+        or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    abas = abas or []
+    resumo = resumo or {}
+
     arquivo_b64 = base64.b64encode(
-        arquivo.getvalue()
+        arquivo_bytes
     ).decode("ascii")
 
     retorno = chamar_api_apps_script(
@@ -343,11 +395,8 @@ def salvar_relatorio_base(
             "acao": "salvar_relatorio",
             "relatorio": {
                 "id": relatorio_id,
-                "arquivo_nome": arquivo.name,
-                "arquivo_mime": (
-                    arquivo.type
-                    or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
+                "arquivo_nome": arquivo_nome,
+                "arquivo_mime": arquivo_mime,
                 "arquivo_base64": arquivo_b64,
                 "municipio": municipio,
                 "data_inicial": data_inicial.strftime("%d/%m/%Y"),
@@ -355,14 +404,14 @@ def salvar_relatorio_base(
                 "competencia": data_inicial.strftime("%m/%Y"),
                 "responsavel": usuario_logado_nome(),
                 "status": "AGUARDANDO VALIDAÇÃO",
-                "valor_total": resumo["Valor total"],
-                "plantoes": resumo["Plantoes"],
-                "consultas": resumo["Consultas faturamento"],
-                "horas": resumo["Horas"],
-                "quant_mes": resumo["Meses"],
-                "pacotes": resumo["Pacotes"],
-                "quant_dia": resumo["Dias"],
-                "profissionais": resumo["Profissionais"],
+                "valor_total": resumo.get("Valor total", 0),
+                "plantoes": resumo.get("Plantoes", 0),
+                "consultas": resumo.get("Consultas faturamento", 0),
+                "horas": resumo.get("Horas", 0),
+                "quant_mes": resumo.get("Meses", 0),
+                "pacotes": resumo.get("Pacotes", 0),
+                "quant_dia": resumo.get("Dias", 0),
+                "profissionais": resumo.get("Profissionais", 0),
                 "abas": abas,
                 "observacoes": observacoes,
             },
@@ -1684,28 +1733,46 @@ if pagina == "🏠 Início":
         f"Perfil: {usuario_logado_perfil()}"
     )
 
-    try:
-        base_inicio = listar_relatorios_base()
+    carregar_painel = st.button(
+        "📊 Carregar / atualizar painel",
+        use_container_width=False,
+    )
+
+    if carregar_painel:
+        try:
+            listar_relatorios_base(atualizar=True)
+        except Exception as erro:
+            st.error("Não consegui carregar a base de relatórios.")
+            with st.expander("Ver detalhes"):
+                st.code(str(erro))
+
+    base_inicio = st.session_state.get(
+        "base_relatorios_drive",
+        []
+    )
+
+    if not base_inicio:
+        st.info(
+            "Clique em **Carregar / atualizar painel** quando quiser consultar "
+            "os números da base. Assim a página inicial fica mais leve."
+        )
+    else:
         base_inicio_df = pd.DataFrame(base_inicio)
+        status = base_inicio_df["Status"].astype(str).str.upper()
 
-        if base_inicio_df.empty:
-            pendentes = validados = alertas = faturados = 0
-            valor_faturado = 0.0
-        else:
-            status = base_inicio_df["Status"].astype(str).str.upper()
-            pendentes = int(status.eq("AGUARDANDO VALIDAÇÃO").sum())
-            validados = int(status.eq("VALIDADO").sum())
-            alertas = int(status.eq("REPROVADO").sum())
-            faturados = int(status.eq("FATURADO").sum())
+        pendentes = int(status.eq("AGUARDANDO VALIDAÇÃO").sum())
+        validados = int(status.eq("VALIDADO").sum())
+        alertas = int(status.eq("REPROVADO").sum())
+        faturados = int(status.eq("FATURADO").sum())
 
-            valores = pd.to_numeric(
-                base_inicio_df.get("Valor total", 0),
-                errors="coerce",
-            ).fillna(0)
+        valores = pd.to_numeric(
+            base_inicio_df.get("Valor total", 0),
+            errors="coerce",
+        ).fillna(0)
 
-            valor_faturado = float(
-                valores[status.eq("FATURADO")].sum()
-            )
+        valor_faturado = float(
+            valores[status.eq("FATURADO")].sum()
+        )
 
         cols = st.columns(5)
         cols[0].metric("⏳ Pendentes", pendentes)
@@ -1713,17 +1780,6 @@ if pagina == "🏠 Início":
         cols[2].metric("⚠️ Reprovados", alertas)
         cols[3].metric("💰 Faturados", faturados)
         cols[4].metric("💵 Valor faturado", formatar_moeda(valor_faturado))
-
-        if st.button("🔄 Atualizar painel"):
-            listar_relatorios_base(atualizar=True)
-            st.rerun()
-
-    except Exception as erro:
-        st.warning(
-            "O painel permanente ainda não pôde ser carregado da planilha."
-        )
-        with st.expander("Ver detalhes"):
-            st.code(str(erro))
 
 elif pagina == "📋 Tabelas de referência":
     st.title("📋 Tabelas de referência")
@@ -1777,7 +1833,8 @@ elif pagina == "📋 Tabelas de referência":
 elif pagina == "📤 Novo relatório":
     st.title("📤 Novo relatório")
     st.write(
-        "Você pode enviar um relatório ou vários relatórios de uma só vez."
+        "Envie um ou vários relatórios. Nesta versão, primeiro o sistema analisa "
+        "os arquivos e só depois você confirma o envio para a base permanente."
     )
     st.caption(
         f"Responsável identificado pelo sistema: "
@@ -1796,269 +1853,385 @@ elif pagina == "📤 Novo relatório":
             f"✅ {len(arquivos)} arquivo(s) selecionado(s)."
         )
 
-        dados_comuns = st.checkbox(
-            "Usar o mesmo município/ente e o mesmo período para todos os arquivos",
-            value=True,
-        )
+        # As abas são lidas uma única vez por arquivo e ficam em cache.
+        arquivos_info = []
+        erro_abas = False
 
-        configuracoes = []
-
-        if dados_comuns:
-            c1, c2, c3 = st.columns(3)
-            municipio_comum = c1.text_input(
-                "Município / ente",
-                placeholder="Ex.: Brumadinho ou FHEMIG",
-                key="municipio_lote",
-            )
-            data_inicial_comum = c2.date_input(
-                "Data inicial",
-                value=date.today(),
-                key="data_inicial_lote",
-            )
-            data_final_comum = c3.date_input(
-                "Data final",
-                value=date.today(),
-                key="data_final_lote",
-            )
-            observacao_comum = st.text_area(
-                "Observações do lote",
-                placeholder="Campo opcional",
-                key="observacao_lote",
-            )
-
-        for indice, arquivo in enumerate(arquivos):
-            with st.expander(
-                f"📄 {arquivo.name}",
-                expanded=(len(arquivos) <= 3),
-            ):
-                if dados_comuns:
-                    municipio_item = municipio_comum
-                    data_inicial_item = data_inicial_comum
-                    data_final_item = data_final_comum
-                    observacao_item = observacao_comum
-                else:
-                    a, b, c = st.columns(3)
-                    municipio_item = a.text_input(
-                        "Município / ente",
-                        key=f"municipio_{indice}_{arquivo.name}",
-                    )
-                    data_inicial_item = b.date_input(
-                        "Data inicial",
-                        value=date.today(),
-                        key=f"inicio_{indice}_{arquivo.name}",
-                    )
-                    data_final_item = c.date_input(
-                        "Data final",
-                        value=date.today(),
-                        key=f"fim_{indice}_{arquivo.name}",
-                    )
-                    observacao_item = st.text_area(
-                        "Observações",
-                        key=f"obs_{indice}_{arquivo.name}",
-                    )
-
+        with st.spinner("Preparando arquivos..."):
+            for indice, arquivo in enumerate(arquivos):
                 try:
-                    excel = pd.ExcelFile(
-                        io.BytesIO(
-                            arquivo.getvalue()
-                        )
-                    )
-                    abas = excel.sheet_names
-
-                    competencia_ini = data_inicial_item.strftime("%m/%Y")
-                    competencia_fim = data_final_item.strftime("%m/%Y")
-
-                    escolhidas = st.multiselect(
-                        "Aba(s) que devem ser analisadas",
-                        abas,
-                        default=sugerir_abas(
-                            abas,
-                            competencia_ini,
-                            competencia_fim,
-                        ),
-                        key=f"abas_{indice}_{arquivo.name}",
+                    abas = obter_abas_upload(arquivo)
+                    arquivos_info.append(
+                        {
+                            "indice": indice,
+                            "arquivo": arquivo,
+                            "abas": abas,
+                        }
                     )
                 except Exception as erro:
-                    abas = []
-                    escolhidas = []
+                    erro_abas = True
                     st.error(
-                        f"Não consegui ler as abas de {arquivo.name}: {erro}"
+                        f"Não consegui abrir {arquivo.name}: {erro}"
                     )
 
-                configuracoes.append({
-                    "arquivo": arquivo,
-                    "municipio": municipio_item,
-                    "data_inicial": data_inicial_item,
-                    "data_final": data_final_item,
-                    "observacoes": observacao_item,
-                    "abas": escolhidas,
-                })
-
-        if st.button(
-            "🔍 ANALISAR E SALVAR TODOS",
-            type="primary",
-            use_container_width=True,
-        ):
-            erros_validacao = []
-
-            for config in configuracoes:
-                if not str(config["municipio"]).strip():
-                    erros_validacao.append(
-                        f"{config['arquivo'].name}: informe o município/ente."
-                    )
-                if config["data_final"] < config["data_inicial"]:
-                    erros_validacao.append(
-                        f"{config['arquivo'].name}: período inválido."
-                    )
-                if not config["abas"]:
-                    erros_validacao.append(
-                        f"{config['arquivo'].name}: escolha pelo menos uma aba."
-                    )
-
-            if erros_validacao:
-                for erro in erros_validacao:
-                    st.error(erro)
-            else:
-                resultados_lote = []
-                lote_sessao = st.session_state.get(
-                    "lote_relatorios",
-                    {}
+        if not erro_abas:
+            with st.form("form_configuracao_lote"):
+                dados_comuns = st.checkbox(
+                    "Usar o mesmo município/ente e o mesmo período para todos os arquivos",
+                    value=True,
                 )
 
-                barra = st.progress(0)
-                status_area = st.empty()
+                configuracoes = []
 
-                for pos, config in enumerate(configuracoes, start=1):
-                    arquivo = config["arquivo"]
-                    status_area.write(
-                        f"Processando {pos} de {len(configuracoes)}: "
-                        f"**{arquivo.name}**"
+                if dados_comuns:
+                    c1, c2, c3 = st.columns(3)
+
+                    municipio_comum = c1.text_input(
+                        "Município / ente",
+                        placeholder="Ex.: Brumadinho ou FHEMIG",
                     )
 
-                    try:
-                        arquivo_bytes = arquivo.getvalue()
+                    data_inicial_comum = c2.date_input(
+                        "Data inicial",
+                        value=date.today(),
+                    )
 
-                        dados, atividades, diagnostico = processar_relatorio(
-                            arquivo_bytes,
-                            arquivo.name,
-                            config["abas"],
-                        )
+                    data_final_comum = c3.date_input(
+                        "Data final",
+                        value=date.today(),
+                    )
 
-                        if dados is None or dados.empty:
-                            raise RuntimeError(
-                                "Nenhum lançamento válido foi identificado."
+                    observacao_comum = st.text_area(
+                        "Observações do lote",
+                        placeholder="Campo opcional",
+                    )
+
+                for item in arquivos_info:
+                    indice = item["indice"]
+                    arquivo = item["arquivo"]
+                    abas = item["abas"]
+
+                    with st.expander(
+                        f"📄 {arquivo.name}",
+                        expanded=(len(arquivos) <= 3),
+                    ):
+                        if dados_comuns:
+                            municipio_item = municipio_comum
+                            data_inicial_item = data_inicial_comum
+                            data_final_item = data_final_comum
+                            observacao_item = observacao_comum
+                        else:
+                            a, b, c = st.columns(3)
+
+                            municipio_item = a.text_input(
+                                "Município / ente",
+                                key=f"municipio_form_{indice}",
                             )
 
-                        resumo = resumo_faturamento(
-                            dados,
-                            atividades,
-                        )
+                            data_inicial_item = b.date_input(
+                                "Data inicial",
+                                value=date.today(),
+                                key=f"inicio_form_{indice}",
+                            )
 
-                        relatorio_id = (
-                            date.today().strftime("%Y%m%d")
-                            + "-"
-                            + uuid.uuid4().hex[:8].upper()
-                        )
+                            data_final_item = c.date_input(
+                                "Data final",
+                                value=date.today(),
+                                key=f"fim_form_{indice}",
+                            )
 
-                        salvar_relatorio_base(
-                            relatorio_id=relatorio_id,
-                            arquivo=arquivo,
-                            municipio=str(config["municipio"]).strip(),
-                            data_inicial=config["data_inicial"],
-                            data_final=config["data_final"],
-                            abas=config["abas"],
-                            observacoes=config["observacoes"],
-                            resumo=resumo,
-                        )
+                            observacao_item = st.text_area(
+                                "Observações",
+                                key=f"obs_form_{indice}",
+                            )
 
-                        lote_sessao[relatorio_id] = {
-                            "dados": dados,
-                            "atividades": atividades,
-                            "diagnostico": diagnostico,
-                            "municipio": str(config["municipio"]).strip(),
-                            "data_inicial": config["data_inicial"],
-                            "data_final": config["data_final"],
-                            "competencia": config["data_inicial"].strftime("%m/%Y"),
-                            "arquivo": arquivo.name,
-                            "resumo": resumo,
-                        }
+                        competencia_ini = data_inicial_item.strftime("%m/%Y")
+                        competencia_fim = data_final_item.strftime("%m/%Y")
 
-                        resultados_lote.append({
-                            "ID": relatorio_id,
-                            "Arquivo": arquivo.name,
-                            "Município / Ente": str(config["municipio"]).strip(),
-                            "Competência": config["data_inicial"].strftime("%m/%Y"),
-                            "Status": "🟡 AGUARDANDO VALIDAÇÃO",
-                            "Valor total": resumo["Valor total"],
-                            "Profissionais": resumo["Profissionais"],
-                            "Situação": "✅ Salvo",
-                        })
-
-                        # O último processado fica ativo para consulta imediata.
-                        st.session_state.update({
-                            "dados_relatorio": dados,
-                            "atividades_relatorio": atividades,
-                            "diagnostico_relatorio": diagnostico,
-                            "municipio_relatorio": str(config["municipio"]).strip(),
-                            "responsavel_relatorio": usuario_logado_nome(),
-                            "observacoes_relatorio": config["observacoes"],
-                            "data_inicial_relatorio": config["data_inicial"],
-                            "data_final_relatorio": config["data_final"],
-                            "periodo_relatorio": (
-                                f"{config['data_inicial'].strftime('%d/%m/%Y')} a "
-                                f"{config['data_final'].strftime('%d/%m/%Y')}"
+                        escolhidas = st.multiselect(
+                            "Aba(s) que devem ser analisadas",
+                            abas,
+                            default=sugerir_abas(
+                                abas,
+                                competencia_ini,
+                                competencia_fim,
                             ),
-                            "competencia_faturamento": config["data_inicial"].strftime("%m/%Y"),
-                            "relatorio_id_atual": relatorio_id,
-                            "arquivo_relatorio_atual": arquivo.name,
-                        })
+                            key=f"abas_form_{indice}",
+                        )
 
-                    except Exception as erro:
-                        resultados_lote.append({
-                            "ID": "",
-                            "Arquivo": arquivo.name,
-                            "Município / Ente": str(config["municipio"]).strip(),
-                            "Competência": config["data_inicial"].strftime("%m/%Y"),
-                            "Status": "",
-                            "Valor total": 0,
-                            "Profissionais": 0,
-                            "Situação": f"❌ {erro}",
-                        })
+                        configuracoes.append(
+                            {
+                                "arquivo": arquivo,
+                                "municipio": municipio_item,
+                                "data_inicial": data_inicial_item,
+                                "data_final": data_final_item,
+                                "observacoes": observacao_item,
+                                "abas": escolhidas,
+                            }
+                        )
 
-                    barra.progress(
-                        pos / len(configuracoes)
-                    )
-
-                st.session_state["lote_relatorios"] = lote_sessao
-                status_area.empty()
-
-                resultado_df = pd.DataFrame(
-                    resultados_lote
+                analisar_lote = st.form_submit_button(
+                    "🔍 ANALISAR LOTE",
+                    type="primary",
+                    use_container_width=True,
                 )
 
-                st.subheader("📋 Resultado do lote")
+            if analisar_lote:
+                erros_validacao = []
+
+                for config in configuracoes:
+                    if not str(config["municipio"]).strip():
+                        erros_validacao.append(
+                            f"{config['arquivo'].name}: informe o município/ente."
+                        )
+
+                    if config["data_final"] < config["data_inicial"]:
+                        erros_validacao.append(
+                            f"{config['arquivo'].name}: período inválido."
+                        )
+
+                    if not config["abas"]:
+                        erros_validacao.append(
+                            f"{config['arquivo'].name}: escolha pelo menos uma aba."
+                        )
+
+                if erros_validacao:
+                    for erro in erros_validacao:
+                        st.error(erro)
+                else:
+                    resultados = []
+                    pendentes_salvar = []
+
+                    barra = st.progress(0)
+                    status_area = st.empty()
+
+                    for pos, config in enumerate(configuracoes, start=1):
+                        arquivo = config["arquivo"]
+
+                        status_area.write(
+                            f"Analisando {pos} de {len(configuracoes)}: "
+                            f"**{arquivo.name}**"
+                        )
+
+                        try:
+                            arquivo_bytes = arquivo.getvalue()
+
+                            dados, atividades, diagnostico = processar_relatorio(
+                                arquivo_bytes,
+                                arquivo.name,
+                                config["abas"],
+                            )
+
+                            if dados is None or dados.empty:
+                                raise RuntimeError(
+                                    "Nenhum lançamento válido foi identificado."
+                                )
+
+                            resumo = resumo_faturamento(
+                                dados,
+                                atividades,
+                            )
+
+                            relatorio_id = (
+                                date.today().strftime("%Y%m%d")
+                                + "-"
+                                + uuid.uuid4().hex[:8].upper()
+                            )
+
+                            item_pendente = {
+                                "relatorio_id": relatorio_id,
+                                "arquivo_bytes": arquivo_bytes,
+                                "arquivo_nome": arquivo.name,
+                                "arquivo_mime": (
+                                    arquivo.type
+                                    or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                ),
+                                "municipio": str(config["municipio"]).strip(),
+                                "data_inicial": config["data_inicial"],
+                                "data_final": config["data_final"],
+                                "abas": config["abas"],
+                                "observacoes": config["observacoes"],
+                                "resumo": resumo,
+                                "dados": dados,
+                                "atividades": atividades,
+                                "diagnostico": diagnostico,
+                            }
+
+                            pendentes_salvar.append(
+                                item_pendente
+                            )
+
+                            resultados.append(
+                                {
+                                    "ID": relatorio_id,
+                                    "Arquivo": arquivo.name,
+                                    "Município / Ente": item_pendente["municipio"],
+                                    "Competência": config["data_inicial"].strftime("%m/%Y"),
+                                    "Valor total": resumo["Valor total"],
+                                    "Profissionais": resumo["Profissionais"],
+                                    "Situação": "✅ Analisado",
+                                }
+                            )
+
+                            # Mantém o último relatório analisado disponível nas telas atuais.
+                            st.session_state.update(
+                                {
+                                    "dados_relatorio": dados,
+                                    "atividades_relatorio": atividades,
+                                    "diagnostico_relatorio": diagnostico,
+                                    "municipio_relatorio": item_pendente["municipio"],
+                                    "responsavel_relatorio": usuario_logado_nome(),
+                                    "observacoes_relatorio": config["observacoes"],
+                                    "data_inicial_relatorio": config["data_inicial"],
+                                    "data_final_relatorio": config["data_final"],
+                                    "periodo_relatorio": (
+                                        f"{config['data_inicial'].strftime('%d/%m/%Y')} a "
+                                        f"{config['data_final'].strftime('%d/%m/%Y')}"
+                                    ),
+                                    "competencia_faturamento": config["data_inicial"].strftime("%m/%Y"),
+                                    "relatorio_id_atual": relatorio_id,
+                                    "arquivo_relatorio_atual": arquivo.name,
+                                }
+                            )
+
+                        except Exception as erro:
+                            resultados.append(
+                                {
+                                    "ID": "",
+                                    "Arquivo": arquivo.name,
+                                    "Município / Ente": str(config["municipio"]).strip(),
+                                    "Competência": config["data_inicial"].strftime("%m/%Y"),
+                                    "Valor total": 0,
+                                    "Profissionais": 0,
+                                    "Situação": f"❌ {erro}",
+                                }
+                            )
+
+                        barra.progress(
+                            pos / len(configuracoes)
+                        )
+
+                    status_area.empty()
+
+                    st.session_state["lote_analisado_pendente"] = pendentes_salvar
+                    st.session_state["resultado_lote_analisado"] = resultados
+
+            resultados = st.session_state.get(
+                "resultado_lote_analisado",
+                []
+            )
+
+            pendentes_salvar = st.session_state.get(
+                "lote_analisado_pendente",
+                []
+            )
+
+            if resultados:
+                st.subheader("📋 Resultado da análise")
+
+                resultado_df = pd.DataFrame(
+                    resultados
+                )
+
                 st.dataframe(
                     resultado_df,
                     use_container_width=True,
                     hide_index=True,
                 )
 
-                salvos = int(
-                    resultado_df["Situação"]
-                    .astype(str)
-                    .str.startswith("✅")
-                    .sum()
+                analisados_ok = sum(
+                    1
+                    for r in resultados
+                    if str(r.get("Situação", "")).startswith("✅")
                 )
 
-                if salvos:
+                if analisados_ok:
                     st.success(
-                        f"✅ {salvos} relatório(s) analisado(s) e salvo(s) "
-                        f"na base permanente."
+                        f"✅ {analisados_ok} relatório(s) analisado(s). "
+                        "Nenhum arquivo foi enviado ao Drive durante a análise."
                     )
-                    st.info(
-                        "Todos os relatórios salvos entram como "
-                        "🟡 AGUARDANDO VALIDAÇÃO."
+
+            if pendentes_salvar:
+                st.info(
+                    "Agora confirme o envio para a base permanente. "
+                    "Essa etapa pode levar alguns segundos por arquivo porque o Excel original "
+                    "é armazenado no Google Drive."
+                )
+
+                if st.button(
+                    "☁️ SALVAR RELATÓRIOS ANALISADOS NA BASE",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    resultados_salvamento = []
+                    barra_salvar = st.progress(0)
+                    status_salvar = st.empty()
+
+                    for pos, item in enumerate(pendentes_salvar, start=1):
+                        status_salvar.write(
+                            f"Salvando {pos} de {len(pendentes_salvar)}: "
+                            f"**{item['arquivo_nome']}**"
+                        )
+
+                        try:
+                            salvar_relatorio_base(
+                                relatorio_id=item["relatorio_id"],
+                                arquivo_bytes=item["arquivo_bytes"],
+                                arquivo_nome=item["arquivo_nome"],
+                                arquivo_mime=item["arquivo_mime"],
+                                municipio=item["municipio"],
+                                data_inicial=item["data_inicial"],
+                                data_final=item["data_final"],
+                                abas=item["abas"],
+                                observacoes=item["observacoes"],
+                                resumo=item["resumo"],
+                            )
+
+                            resultados_salvamento.append(
+                                {
+                                    "Arquivo": item["arquivo_nome"],
+                                    "Status": "🟡 AGUARDANDO VALIDAÇÃO",
+                                    "Situação": "✅ Salvo na base",
+                                }
+                            )
+
+                        except Exception as erro:
+                            resultados_salvamento.append(
+                                {
+                                    "Arquivo": item["arquivo_nome"],
+                                    "Status": "",
+                                    "Situação": f"❌ {erro}",
+                                }
+                            )
+
+                        barra_salvar.progress(
+                            pos / len(pendentes_salvar)
+                        )
+
+                    status_salvar.empty()
+
+                    st.subheader("☁️ Resultado do salvamento")
+                    st.dataframe(
+                        pd.DataFrame(resultados_salvamento),
+                        use_container_width=True,
+                        hide_index=True,
                     )
+
+                    if all(
+                        str(r["Situação"]).startswith("✅")
+                        for r in resultados_salvamento
+                    ):
+                        st.session_state.pop(
+                            "lote_analisado_pendente",
+                            None,
+                        )
+                        st.session_state.pop(
+                            "resultado_lote_analisado",
+                            None,
+                        )
+                        st.success(
+                            "✅ Todos os relatórios foram enviados para a base permanente."
+                        )
 
 elif pagina == "📂 Base de relatórios":
     st.title("📂 Base de relatórios")
@@ -2869,7 +3042,7 @@ elif pagina == "⚙️ Configurações":
 
     if st.button("🧪 Testar integração com o Apps Script"):
         try:
-            diagnostico_backend = verificar_backend_base()
+            diagnostico_backend = verificar_backend_base(forcar=True)
             st.success(
                 "✅ Integração correta. "
                 f"Apps Script {diagnostico_backend.get('backend_version', '')} conectado."
