@@ -17,8 +17,9 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.5"
+VERSAO = "2.5.1"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
+VERSAO_BACKEND_ESPERADA = "2.5.1"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
 
@@ -256,7 +257,58 @@ def chamar_api_apps_script(payload, timeout=90):
     return retorno
 
 
+def verificar_backend_base():
+    url, chave = conexao_apps_script()
+    if not url or not chave:
+        raise RuntimeError(
+            "A conexão com o Apps Script não está configurada nos Secrets."
+        )
+
+    resposta = requests.post(
+        url,
+        json={
+            "chave": chave,
+            "acao": "diagnostico",
+        },
+        timeout=45,
+        allow_redirects=True,
+    )
+    resposta.raise_for_status()
+
+    try:
+        retorno = resposta.json()
+    except Exception:
+        raise RuntimeError(
+            "O Apps Script respondeu, mas não retornou JSON válido."
+        )
+
+    versao_backend = str(
+        retorno.get("backend_version", "")
+    ).strip()
+
+    if not retorno.get("sucesso", False) or versao_backend != VERSAO_BACKEND_ESPERADA:
+        mensagem = str(
+            retorno.get("mensagem", "")
+        ).strip()
+
+        detalhe = (
+            f" Resposta recebida: {mensagem}"
+            if mensagem
+            else ""
+        )
+
+        raise RuntimeError(
+            "O Streamlit está conectado a uma implantação antiga do Apps Script. "
+            f"Versão esperada: {VERSAO_BACKEND_ESPERADA}. "
+            f"Versão recebida: {versao_backend or 'não identificada'}."
+            + detalhe
+        )
+
+    return retorno
+
+
 def listar_relatorios_base(atualizar=False):
+    verificar_backend_base()
     if atualizar or "base_relatorios_drive" not in st.session_state:
         retorno = chamar_api_apps_script({
             "acao": "listar_relatorios",
@@ -280,6 +332,8 @@ def salvar_relatorio_base(
     observacoes,
     resumo,
 ):
+    verificar_backend_base()
+
     arquivo_b64 = base64.b64encode(
         arquivo.getvalue()
     ).decode("ascii")
@@ -321,6 +375,7 @@ def salvar_relatorio_base(
 
 
 def atualizar_status_relatorio(relatorio_id, status, observacao=""):
+    verificar_backend_base()
     retorno = chamar_api_apps_script({
         "acao": "atualizar_status_relatorio",
         "relatorio_id": relatorio_id,
@@ -333,6 +388,7 @@ def atualizar_status_relatorio(relatorio_id, status, observacao=""):
 
 
 def carregar_relatorio_da_base(relatorio_id):
+    verificar_backend_base()
     retorno = chamar_api_apps_script(
         {
             "acao": "baixar_relatorio",
@@ -2808,5 +2864,19 @@ elif pagina == "📚 Histórico":
 
 elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
-    st.write(f"Versão atual: {VERSAO}")
+    st.write(f"Versão atual do sistema: {VERSAO}")
+    st.write(f"Versão esperada do Apps Script: {VERSAO_BACKEND_ESPERADA}")
+
+    if st.button("🧪 Testar integração com o Apps Script"):
+        try:
+            diagnostico_backend = verificar_backend_base()
+            st.success(
+                "✅ Integração correta. "
+                f"Apps Script {diagnostico_backend.get('backend_version', '')} conectado."
+            )
+            st.json(diagnostico_backend)
+        except Exception as erro:
+            st.error("A integração ainda não está usando a versão correta do Apps Script.")
+            st.code(str(erro))
+
     st.code(URL_ICISMEP)
