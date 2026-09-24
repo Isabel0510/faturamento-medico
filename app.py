@@ -1,6 +1,7 @@
 import io
 import re
 import unicodedata
+import hmac
 from datetime import date
 from difflib import SequenceMatcher
 
@@ -15,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.1"
+VERSAO = "2.2"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -82,6 +83,111 @@ def competencias_do_periodo(data_inicial, data_final):
 
 def proximo(a, b, tolerancia=0.02):
     return abs(float(a) - float(b)) <= tolerancia
+
+
+# ============================================================
+# LOGIN E PERFIS DE ACESSO
+# ============================================================
+def usuarios_configurados():
+    try:
+        return st.secrets["usuarios"]
+    except Exception:
+        return {}
+
+
+def autenticar_usuario(login, senha):
+    usuarios = usuarios_configurados()
+    login_n = str(login or "").strip().lower()
+
+    for usuario_id, config in usuarios.items():
+        if str(usuario_id).strip().lower() != login_n:
+            continue
+
+        senha_cadastrada = str(config.get("senha", ""))
+        if not senha_cadastrada:
+            return None
+
+        if hmac.compare_digest(str(senha), senha_cadastrada):
+            return {
+                "login": str(usuario_id),
+                "nome": str(config.get("nome", usuario_id)),
+                "perfil": str(config.get("perfil", "Lançador")),
+            }
+
+    return None
+
+
+def usuario_logado_nome():
+    return st.session_state.get("usuario_nome", "")
+
+
+def usuario_logado_perfil():
+    return st.session_state.get("usuario_perfil", "")
+
+
+def fazer_logout():
+    chaves = [
+        "autenticado", "usuario_login", "usuario_nome", "usuario_perfil",
+        "previa_faturamento_drive", "confirmar_substituicao_drive"
+    ]
+    for chave in chaves:
+        st.session_state.pop(chave, None)
+    st.rerun()
+
+
+def exigir_login():
+    if st.session_state.get("autenticado", False):
+        return
+
+    st.title("🔐 Acesso ao sistema")
+    st.write("Entre com seu usuário e senha para continuar.")
+
+    usuarios = usuarios_configurados()
+    if not usuarios:
+        st.error("Nenhum usuário foi configurado nos Secrets do Streamlit.")
+        st.code(
+            '[usuarios.admin]\nnome = "Administrador"\nsenha = "SUA_SENHA"\nperfil = "Administrador"'
+        )
+        st.stop()
+
+    with st.form("form_login"):
+        login = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+        entrar = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+
+    if entrar:
+        usuario = autenticar_usuario(login, senha)
+        if usuario is None:
+            st.error("Usuário ou senha inválidos.")
+        else:
+            st.session_state["autenticado"] = True
+            st.session_state["usuario_login"] = usuario["login"]
+            st.session_state["usuario_nome"] = usuario["nome"]
+            st.session_state["usuario_perfil"] = usuario["perfil"]
+            st.rerun()
+
+    st.stop()
+
+
+def paginas_permitidas(perfil):
+    todas = [
+        "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório", "🔍 Análise",
+        "⚠️ Divergências", "✅ Validação", "💰 Faturamento", "📚 Histórico", "⚙️ Configurações"
+    ]
+
+    permissoes = {
+        "Lançador": [
+            "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
+            "🔍 Análise", "⚠️ Divergências", "💰 Faturamento", "📚 Histórico"
+        ],
+        "Validador": [
+            "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
+            "🔍 Análise", "⚠️ Divergências", "✅ Validação", "📚 Histórico"
+        ],
+        "Administrador": todas,
+    }
+
+    return permissoes.get(perfil, ["🏠 Início"])
 
 # ============================================================
 # CRM E PROFISSIONAL
@@ -1256,13 +1362,21 @@ def gerar_planilha_faturamento(arquivo_bytes, competencia, entidade, resumo, apl
 
 
 # ============================================================
-# MENU
+# LOGIN + MENU
 # ============================================================
+exigir_login()
+
+perfil_atual = usuario_logado_perfil()
+nome_atual = usuario_logado_nome()
+
 st.sidebar.title("📊 Faturamento Médico")
-pagina = st.sidebar.radio("Menu", [
-    "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório", "🔍 Análise",
-    "⚠️ Divergências", "✅ Validação", "💰 Faturamento", "📚 Histórico", "⚙️ Configurações"
-])
+st.sidebar.write(f"👤 **{nome_atual}**")
+st.sidebar.caption(f"Perfil: {perfil_atual}")
+if st.sidebar.button("🚪 Sair", use_container_width=True):
+    fazer_logout()
+
+st.sidebar.divider()
+pagina = st.sidebar.radio("Menu", paginas_permitidas(perfil_atual))
 st.sidebar.divider()
 st.sidebar.caption(f"Versão {VERSAO}")
 
@@ -1272,6 +1386,7 @@ st.sidebar.caption(f"Versão {VERSAO}")
 if pagina == "🏠 Início":
     st.title("🏠 Início")
     st.write("Sistema para leitura, conferência, validação e faturamento de serviços médicos.")
+    st.caption(f"Usuário conectado: {usuario_logado_nome()} | Perfil: {usuario_logado_perfil()}")
     cols = st.columns(4)
     cols[0].metric("⏳ Pendentes", "0")
     cols[1].metric("✅ Validados", "0")
@@ -1330,7 +1445,8 @@ elif pagina == "📋 Tabelas de referência":
 elif pagina == "📤 Novo relatório":
     st.title("📤 Novo relatório")
     municipio = st.text_input("Município / ente do relatório", placeholder="Ex.: Brumadinho ou FHEMIG")
-    responsavel = st.text_input("Responsável pelo preenchimento", placeholder="Nome de quem está enviando")
+    responsavel = usuario_logado_nome()
+    st.caption(f"Responsável identificado pelo login: **{responsavel}** ({usuario_logado_perfil()})")
     c1, c2 = st.columns(2)
     data_inicial = c1.date_input("Data inicial", value=date.today())
     data_final = c2.date_input("Data final", value=date.today())
@@ -1607,8 +1723,9 @@ elif pagina == "💰 Faturamento":
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
-    st.write("As diferentes versões das tabelas não substituem umas às outras.")
-    st.info("O armazenamento permanente será adicionado depois.")
+    st.write("Os lançamentos feitos na planilha oficial são registrados permanentemente na aba **HISTORICO_LANCAMENTOS**.")
+    st.info("O responsável gravado no histórico agora vem do usuário autenticado, e não de um nome digitado manualmente.")
+    st.caption("Na próxima etapa, o histórico da planilha será exibido aqui com filtros por usuário, competência e município/ente.")
 
 elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
