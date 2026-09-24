@@ -15,7 +15,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.3"
+VERSAO = "2.4"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -1741,9 +1741,247 @@ elif pagina == "💰 Faturamento":
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
-    st.write("Os lançamentos feitos na planilha oficial são registrados permanentemente na aba **HISTORICO_LANCAMENTOS**.")
-    st.info("O responsável gravado no histórico agora vem do usuário autenticado, e não de um nome digitado manualmente.")
-    st.caption("Na próxima etapa, o histórico da planilha será exibido aqui com filtros por usuário, competência e município/ente.")
+    st.write(
+        "Consulte os lançamentos registrados permanentemente na planilha oficial. "
+        "Você pode filtrar por responsável, competência e município/ente."
+    )
+
+    try:
+        historico_url = st.secrets["apps_script"]["url"]
+        historico_chave = st.secrets["apps_script"]["chave"]
+        historico_configurado = True
+    except Exception:
+        historico_url = ""
+        historico_chave = ""
+        historico_configurado = False
+
+    if not historico_configurado:
+        st.error(
+            "A conexão com a planilha oficial ainda não está configurada nos Secrets do Streamlit."
+        )
+    else:
+        col_atualizar, col_info = st.columns([1, 3])
+
+        with col_atualizar:
+            atualizar_historico = st.button(
+                "🔄 Atualizar histórico",
+                type="primary",
+                use_container_width=True,
+            )
+
+        with col_info:
+            st.caption(
+                "Os dados exibidos aqui vêm diretamente da aba HISTORICO_LANCAMENTOS "
+                "da planilha oficial no Google Drive."
+            )
+
+        if atualizar_historico or "historico_drive" not in st.session_state:
+            try:
+                with st.spinner("Buscando histórico na planilha oficial..."):
+                    resposta = requests.post(
+                        historico_url,
+                        json={
+                            "chave": historico_chave,
+                            "acao": "historico",
+                        },
+                        timeout=45,
+                        allow_redirects=True,
+                    )
+
+                    resposta.raise_for_status()
+
+                    try:
+                        retorno = resposta.json()
+                    except Exception:
+                        raise RuntimeError(
+                            "O Apps Script respondeu, mas não retornou JSON válido."
+                        )
+
+                    if not retorno.get("sucesso", False):
+                        raise RuntimeError(
+                            retorno.get(
+                                "mensagem",
+                                "Não foi possível consultar o histórico."
+                            )
+                        )
+
+                    st.session_state["historico_drive"] = retorno.get(
+                        "historico",
+                        []
+                    )
+
+            except Exception as erro:
+                st.error("Não consegui consultar o histórico da planilha oficial.")
+                with st.expander("Ver detalhes do erro"):
+                    st.code(str(erro))
+
+        registros_historico = st.session_state.get(
+            "historico_drive",
+            []
+        )
+
+        if not registros_historico:
+            st.info(
+                "Ainda não há lançamentos registrados no histórico "
+                "ou o histórico ainda não foi atualizado."
+            )
+        else:
+            historico_df = pd.DataFrame(registros_historico)
+
+            colunas_esperadas = [
+                "Data/Hora",
+                "Responsável",
+                "Competência",
+                "Município / Ente",
+                "Aba",
+                "Linha",
+                "Valor anterior",
+                "Novo valor",
+                "Plantões",
+                "Consultas",
+                "Horas",
+                "Quant. mês",
+                "Pacotes",
+                "Quant. dia",
+                "Profissionais",
+            ]
+
+            for coluna in colunas_esperadas:
+                if coluna not in historico_df.columns:
+                    historico_df[coluna] = ""
+
+            historico_df = historico_df[colunas_esperadas].copy()
+
+            for coluna in [
+                "Valor anterior",
+                "Novo valor",
+                "Plantões",
+                "Consultas",
+                "Horas",
+                "Quant. mês",
+                "Pacotes",
+                "Quant. dia",
+                "Profissionais",
+            ]:
+                historico_df[coluna] = pd.to_numeric(
+                    historico_df[coluna],
+                    errors="coerce",
+                ).fillna(0)
+
+            st.subheader("🔎 Filtros")
+
+            f1, f2, f3 = st.columns(3)
+
+            responsaveis = sorted(
+                [
+                    x for x in historico_df["Responsável"].astype(str).unique()
+                    if x.strip()
+                ]
+            )
+
+            competencias = sorted(
+                [
+                    x for x in historico_df["Competência"].astype(str).unique()
+                    if x.strip()
+                ],
+                reverse=True,
+            )
+
+            municipios = sorted(
+                [
+                    x for x in historico_df["Município / Ente"].astype(str).unique()
+                    if x.strip()
+                ]
+            )
+
+            filtro_responsavel = f1.selectbox(
+                "Responsável",
+                ["Todos"] + responsaveis,
+            )
+
+            filtro_competencia = f2.selectbox(
+                "Competência",
+                ["Todas"] + competencias,
+            )
+
+            filtro_municipio = f3.selectbox(
+                "Município / ente",
+                ["Todos"] + municipios,
+            )
+
+            filtrado = historico_df.copy()
+
+            if filtro_responsavel != "Todos":
+                filtrado = filtrado[
+                    filtrado["Responsável"].astype(str) == filtro_responsavel
+                ]
+
+            if filtro_competencia != "Todas":
+                filtrado = filtrado[
+                    filtrado["Competência"].astype(str) == filtro_competencia
+                ]
+
+            if filtro_municipio != "Todos":
+                filtrado = filtrado[
+                    filtrado["Município / Ente"].astype(str) == filtro_municipio
+                ]
+
+            st.subheader("📊 Resumo")
+
+            m1, m2, m3, m4 = st.columns(4)
+
+            m1.metric(
+                "Lançamentos",
+                len(filtrado),
+            )
+
+            m2.metric(
+                "Valor lançado",
+                formatar_moeda(
+                    filtrado["Novo valor"].sum()
+                ),
+            )
+
+            m3.metric(
+                "Municípios / entes",
+                filtrado["Município / Ente"].astype(str).nunique(),
+            )
+
+            m4.metric(
+                "Responsáveis",
+                filtrado["Responsável"].astype(str).nunique(),
+            )
+
+            st.subheader("📋 Lançamentos")
+
+            exibicao = filtrado.copy()
+
+            exibicao["Valor anterior"] = exibicao[
+                "Valor anterior"
+            ].apply(formatar_moeda)
+
+            exibicao["Novo valor"] = exibicao[
+                "Novo valor"
+            ].apply(formatar_moeda)
+
+            st.dataframe(
+                exibicao,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            csv_historico = filtrado.to_csv(
+                index=False,
+                sep=";",
+                decimal=",",
+            ).encode("utf-8-sig")
+
+            st.download_button(
+                "⬇️ Baixar histórico filtrado em CSV",
+                data=csv_historico,
+                file_name="historico_faturamento.csv",
+                mime="text/csv",
+            )
 
 elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
