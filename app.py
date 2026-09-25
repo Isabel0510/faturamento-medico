@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.6"
+VERSAO = "2.7"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -606,6 +606,113 @@ def resumo_por_arquivo(dados, atividades):
         })
 
     return pd.DataFrame(linhas)
+
+# ============================================================
+# RELATÓRIOS ANALISADOS NA SESSÃO
+# ============================================================
+def id_relatorio_sessao(nome_arquivo, arquivo_bytes):
+    assinatura = hashlib.sha1(arquivo_bytes).hexdigest()[:10]
+    return f"{nome_arquivo}::{assinatura}"
+
+
+def relatorios_analisados_sessao():
+    return st.session_state.setdefault("relatorios_analisados", {})
+
+
+def rotulo_relatorio_sessao(relatorio_id, relatorio):
+    return (
+        f"{relatorio.get('arquivo', 'Relatório')} | "
+        f"{relatorio.get('municipio', '')} | "
+        f"{relatorio.get('competencia', '')}"
+    )
+
+
+def ativar_relatorio_sessao(relatorio_id):
+    relatorios = relatorios_analisados_sessao()
+    if relatorio_id not in relatorios:
+        return False
+
+    relatorio = relatorios[relatorio_id]
+    st.session_state.update({
+        "relatorio_ativo_id": relatorio_id,
+        "dados_relatorio": relatorio["dados"],
+        "atividades_relatorio": relatorio["atividades"],
+        "diagnostico_relatorio": relatorio["diagnostico"],
+        "municipio_relatorio": relatorio["municipio"],
+        "responsavel_relatorio": relatorio["responsavel"],
+        "observacoes_relatorio": relatorio["observacoes"],
+        "data_inicial_relatorio": relatorio["data_inicial"],
+        "data_final_relatorio": relatorio["data_final"],
+        "periodo_relatorio": relatorio["periodo"],
+        "competencia_faturamento": relatorio["competencia"],
+        "arquivo_relatorio_atual": relatorio["arquivo"],
+    })
+    return True
+
+
+def combinar_relatorios_para_faturamento(ids_selecionados):
+    relatorios = relatorios_analisados_sessao()
+    selecionados = [
+        relatorios[rid]
+        for rid in ids_selecionados
+        if rid in relatorios
+    ]
+
+    if not selecionados:
+        return None
+
+    municipios = {normalizar_texto(r.get("municipio", "")) for r in selecionados}
+    competencias = {str(r.get("competencia", "")).strip() for r in selecionados}
+
+    if len(municipios) != 1:
+        raise ValueError(
+            "Para somar no faturamento, selecione somente relatórios do mesmo município/ente."
+        )
+    if len(competencias) != 1:
+        raise ValueError(
+            "Para somar no faturamento, selecione somente relatórios da mesma competência."
+        )
+
+    dados_lista = [
+        r["dados"] for r in selecionados
+        if r.get("dados") is not None and not r["dados"].empty
+    ]
+    atividades_lista = [
+        r["atividades"] for r in selecionados
+        if r.get("atividades") is not None and not r["atividades"].empty
+    ]
+
+    dados = pd.concat(dados_lista, ignore_index=True) if dados_lista else pd.DataFrame()
+    atividades = pd.concat(atividades_lista, ignore_index=True) if atividades_lista else pd.DataFrame()
+    resumo = resumo_faturamento(dados, atividades)
+
+    por_relatorio = []
+    for r in selecionados:
+        ri = resumo_faturamento(r["dados"], r["atividades"])
+        por_relatorio.append({
+            "Arquivo": r["arquivo"],
+            "Município / Ente": r["municipio"],
+            "Competência": r["competencia"],
+            "Valor total": ri["Valor total"],
+            "Plantões": ri["Plantoes"],
+            "Consultas faturamento": ri["Consultas faturamento"],
+            "Horas": ri["Horas"],
+            "Quant. mês": ri["Meses"],
+            "Pacotes": ri["Pacotes"],
+            "Quant. dia": ri["Dias"],
+            "Profissionais no relatório": ri["Profissionais"],
+        })
+
+    return {
+        "selecionados": selecionados,
+        "dados": dados,
+        "atividades": atividades,
+        "resumo": resumo,
+        "por_relatorio": pd.DataFrame(por_relatorio),
+        "municipio": selecionados[0]["municipio"],
+        "competencia": selecionados[0]["competencia"],
+    }
+
 
 # ============================================================
 # TABELAS DE REFERÊNCIA
@@ -1528,61 +1635,37 @@ elif pagina == "📋 Tabelas de referência":
 elif pagina == "📤 Novo relatório":
     st.title("📤 Novo relatório")
     st.write(
-        "Você pode selecionar **vários relatórios de uma vez**. "
-        "Quando eles pertencem ao mesmo município/ente e período, "
-        "o sistema soma tudo automaticamente para o faturamento."
+        "Você pode selecionar vários arquivos de uma vez, mas cada relatório é analisado "
+        "e mantido **separadamente**. Nenhuma soma é feita nesta etapa."
+    )
+    st.info(
+        "A soma será feita somente em **💰 Faturamento**, onde você escolherá quais relatórios entram no total."
     )
 
     municipio = st.text_input(
-        "Município / ente dos relatórios",
+        "Município / ente dos relatórios deste lote",
         placeholder="Ex.: Ubá, Brumadinho ou FHEMIG",
     )
-
     responsavel = usuario_logado_nome()
-
     st.caption(
-        f"Responsável identificado: **{responsavel}** "
-        f"({usuario_logado_perfil()})"
+        f"Responsável identificado: **{responsavel}** ({usuario_logado_perfil()})"
     )
 
     c1, c2 = st.columns(2)
-
-    data_inicial = c1.date_input(
-        "Data inicial",
-        value=date.today(),
-    )
-
-    data_final = c2.date_input(
-        "Data final",
-        value=date.today(),
-    )
-
+    data_inicial = c1.date_input("Data inicial", value=date.today())
+    data_final = c2.date_input("Data final", value=date.today())
     competencia_inicial = data_inicial.strftime("%m/%Y")
     competencia_final = data_final.strftime("%m/%Y")
 
     if data_final < data_inicial:
-        st.error(
-            "A data final não pode ser anterior à data inicial."
-        )
+        st.error("A data final não pode ser anterior à data inicial.")
     else:
-        comps = competencias_do_periodo(
-            data_inicial,
-            data_final,
-        )
-
+        comps = competencias_do_periodo(data_inicial, data_final)
         if len(comps) == 1:
-            st.success(
-                f"✅ Competência identificada: {comps[0]}"
-            )
+            st.success(f"✅ Competência identificada: {comps[0]}")
         else:
-            st.warning(
-                "⚠️ Este conjunto envolve mais de uma competência: "
-                + " | ".join(comps)
-            )
-
-        st.success(
-            f"💰 Competência do faturamento: {competencia_inicial}"
-        )
+            st.warning("⚠️ Este período envolve mais de uma competência: " + " | ".join(comps))
+        st.success(f"💰 Competência do faturamento: {competencia_inicial}")
 
     observacoes = st.text_area(
         "Outras informações / observações",
@@ -1593,43 +1676,29 @@ elif pagina == "📤 Novo relatório":
         "📎 Selecione um ou vários relatórios Excel",
         type=["xlsx"],
         accept_multiple_files=True,
-        key="arquivos_relatorios_rapido",
+        key="arquivos_relatorios_separados",
     )
 
     if arquivos:
-        st.info(
-            f"📚 {len(arquivos)} relatório(s) selecionado(s)."
-        )
-
+        st.info(f"📚 {len(arquivos)} relatório(s) selecionado(s).")
         configuracoes = []
         erro_abas = False
 
         for indice, arquivo in enumerate(arquivos):
             try:
                 arquivo_bytes = arquivo.getvalue()
-                abas = listar_abas_excel_cache(
-                    arquivo_bytes
-                )
+                abas = listar_abas_excel_cache(arquivo_bytes)
 
                 if len(abas) == 1:
                     escolhidas = abas
-                    st.caption(
-                        f"✅ {arquivo.name}: aba **{abas[0]}** selecionada automaticamente."
-                    )
+                    st.caption(f"✅ {arquivo.name}: aba **{abas[0]}** selecionada automaticamente.")
                 else:
-                    with st.expander(
-                        f"📄 {arquivo.name}",
-                        expanded=False,
-                    ):
+                    with st.expander(f"📄 {arquivo.name}", expanded=False):
                         escolhidas = st.multiselect(
                             "Aba(s) que devem ser analisadas",
                             abas,
-                            default=sugerir_abas(
-                                abas,
-                                competencia_inicial,
-                                competencia_final,
-                            ),
-                            key=f"abas_rapido_{indice}",
+                            default=sugerir_abas(abas, competencia_inicial, competencia_final),
+                            key=f"abas_separadas_{indice}",
                         )
 
                 configuracoes.append({
@@ -1637,268 +1706,165 @@ elif pagina == "📤 Novo relatório":
                     "arquivo_bytes": arquivo_bytes,
                     "abas": tuple(escolhidas),
                 })
-
             except Exception as erro:
                 erro_abas = True
-                st.error(
-                    f"Não foi possível abrir {arquivo.name}: {erro}"
-                )
+                st.error(f"Não foi possível abrir {arquivo.name}: {erro}")
 
         if (
             not erro_abas
-            and st.button(
-                "🔍 ANALISAR E SOMAR RELATÓRIOS",
-                type="primary",
-                use_container_width=True,
-            )
+            and st.button("🔍 ANALISAR RELATÓRIOS", type="primary", use_container_width=True)
         ):
             if data_final < data_inicial:
-                st.error(
-                    "Corrija o período antes de analisar."
-                )
-
+                st.error("Corrija o período antes de analisar.")
             elif not municipio.strip():
-                st.error(
-                    "Informe o município / ente."
-                )
-
-            elif any(
-                not config["abas"]
-                for config in configuracoes
-            ):
-                st.error(
-                    "Escolha pelo menos uma aba em todos os relatórios."
-                )
-
+                st.error("Informe o município / ente.")
+            elif any(not config["abas"] for config in configuracoes):
+                st.error("Escolha pelo menos uma aba em todos os relatórios.")
             else:
-                todos_dados = []
-                todas_atividades = []
-                todos_diagnosticos = []
-
+                relatorios_sessao = relatorios_analisados_sessao()
+                resultados = []
                 barra = st.progress(0)
                 status = st.empty()
+                ultimo_id = None
 
-                for posicao, config in enumerate(
-                    configuracoes,
-                    start=1,
-                ):
+                for posicao, config in enumerate(configuracoes, start=1):
                     arquivo = config["arquivo"]
-
                     status.write(
-                        f"Analisando {posicao} de {len(configuracoes)}: "
-                        f"**{arquivo.name}**"
+                        f"Analisando {posicao} de {len(configuracoes)}: **{arquivo.name}**"
                     )
-
                     try:
                         dados, atividades, diagnostico = processar_relatorio_cache(
-                            config["arquivo_bytes"],
-                            arquivo.name,
-                            config["abas"],
+                            config["arquivo_bytes"], arquivo.name, config["abas"]
                         )
+                        if dados is None or dados.empty:
+                            raise RuntimeError("Nenhum lançamento válido foi identificado.")
 
-                        if dados is not None and not dados.empty:
-                            todos_dados.append(
-                                dados
-                            )
+                        relatorio_id = id_relatorio_sessao(arquivo.name, config["arquivo_bytes"])
+                        relatorio = {
+                            "id": relatorio_id,
+                            "arquivo": arquivo.name,
+                            "municipio": municipio.strip(),
+                            "responsavel": responsavel,
+                            "observacoes": observacoes,
+                            "data_inicial": data_inicial,
+                            "data_final": data_final,
+                            "periodo": (
+                                f"{data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}"
+                            ),
+                            "competencia": competencia_inicial,
+                            "dados": dados,
+                            "atividades": atividades,
+                            "diagnostico": diagnostico,
+                        }
+                        relatorios_sessao[relatorio_id] = relatorio
+                        ultimo_id = relatorio_id
 
-                        if atividades is not None and not atividades.empty:
-                            todas_atividades.append(
-                                atividades
-                            )
-
-                        if diagnostico is not None and not diagnostico.empty:
-                            diag = diagnostico.copy()
-                            diag.insert(
-                                0,
-                                "Arquivo",
-                                arquivo.name,
-                            )
-                            todos_diagnosticos.append(
-                                diag
-                            )
-
+                        resumo_item = resumo_faturamento(dados, atividades)
+                        resultados.append({
+                            "Arquivo": arquivo.name,
+                            "Situação": "✅ Analisado",
+                            "Valor total": resumo_item["Valor total"],
+                            "Plantões": resumo_item["Plantoes"],
+                            "Consultas": resumo_item["Consultas faturamento"],
+                            "Horas": resumo_item["Horas"],
+                            "Profissionais": resumo_item["Profissionais"],
+                        })
                     except Exception as erro:
-                        todos_diagnosticos.append(
-                            pd.DataFrame([
-                                {
-                                    "Arquivo": arquivo.name,
-                                    "Aba": "",
-                                    "Cabeçalhos encontrados": 0,
-                                    "Lançamentos válidos": 0,
-                                    "Atividades por código": 0,
-                                    "Códigos reconhecidos": 0,
-                                    "Colunas de horas": 0,
-                                    "Situação": f"ERRO: {erro}",
-                                }
-                            ])
-                        )
-
-                    barra.progress(
-                        posicao / len(configuracoes)
-                    )
+                        resultados.append({
+                            "Arquivo": arquivo.name,
+                            "Situação": f"❌ {erro}",
+                            "Valor total": 0,
+                            "Plantões": 0,
+                            "Consultas": 0,
+                            "Horas": 0,
+                            "Profissionais": 0,
+                        })
+                    barra.progress(posicao / len(configuracoes))
 
                 status.empty()
+                if ultimo_id:
+                    ativar_relatorio_sessao(ultimo_id)
 
-                dados_final = (
-                    pd.concat(
-                        todos_dados,
-                        ignore_index=True,
-                    )
-                    if todos_dados
-                    else pd.DataFrame()
+                resultado_df = pd.DataFrame(resultados)
+                st.subheader("📋 Resultado da análise individual")
+                st.dataframe(resultado_df, use_container_width=True, hide_index=True)
+
+                qtd_ok = int(
+                    resultado_df["Situação"].astype(str).str.startswith("✅").sum()
                 )
-
-                atividades_final = (
-                    pd.concat(
-                        todas_atividades,
-                        ignore_index=True,
-                    )
-                    if todas_atividades
-                    else pd.DataFrame()
-                )
-
-                diagnostico_final = (
-                    pd.concat(
-                        todos_diagnosticos,
-                        ignore_index=True,
-                    )
-                    if todos_diagnosticos
-                    else pd.DataFrame()
-                )
-
-                if dados_final.empty:
-                    st.error(
-                        "Nenhum lançamento válido foi identificado nos relatórios."
-                    )
-                else:
-                    nomes_arquivos = [
-                        config["arquivo"].name
-                        for config in configuracoes
-                    ]
-
-                    st.session_state.update({
-                        "dados_relatorio": dados_final,
-                        "atividades_relatorio": atividades_final,
-                        "diagnostico_relatorio": diagnostico_final,
-                        "municipio_relatorio": municipio.strip(),
-                        "responsavel_relatorio": responsavel,
-                        "observacoes_relatorio": observacoes,
-                        "data_inicial_relatorio": data_inicial,
-                        "data_final_relatorio": data_final,
-                        "periodo_relatorio": (
-                            f"{data_inicial.strftime('%d/%m/%Y')} a "
-                            f"{data_final.strftime('%d/%m/%Y')}"
-                        ),
-                        "competencia_faturamento": competencia_inicial,
-                        "arquivos_relatorio": nomes_arquivos,
-                    })
-
-                    resumo_total = resumo_faturamento(
-                        dados_final,
-                        atividades_final,
-                    )
-
-                    st.success(
-                        f"✅ {len(nomes_arquivos)} relatório(s) analisado(s) e somado(s)."
-                    )
-
-                    st.subheader(
-                        "🧮 Total combinado para faturamento"
-                    )
-
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric(
-                        "Valor total",
-                        formatar_moeda(
-                            resumo_total["Valor total"]
-                        ),
-                    )
-                    m2.metric(
-                        "Plantões",
-                        formatar_numero(
-                            resumo_total["Plantoes"],
-                            2,
-                        ),
-                    )
-                    m3.metric(
-                        "Consultas",
-                        formatar_numero(
-                            resumo_total["Consultas faturamento"],
-                            2,
-                        ),
-                    )
-                    m4.metric(
-                        "Horas",
-                        formatar_numero(
-                            resumo_total["Horas"],
-                            2,
-                        ),
-                    )
-
-                    m5, m6, m7, m8 = st.columns(4)
-                    m5.metric(
-                        "Quant. mês",
-                        formatar_numero(
-                            resumo_total["Meses"],
-                            2,
-                        ),
-                    )
-                    m6.metric(
-                        "Pacotes",
-                        formatar_numero(
-                            resumo_total["Pacotes"],
-                            2,
-                        ),
-                    )
-                    m7.metric(
-                        "Quant. dia",
-                        formatar_numero(
-                            resumo_total["Dias"],
-                            2,
-                        ),
-                    )
-                    m8.metric(
-                        "Profissionais únicos",
-                        resumo_total["Profissionais"],
-                    )
-
+                if qtd_ok:
+                    st.success(f"✅ {qtd_ok} relatório(s) analisado(s) separadamente.")
                     st.info(
-                        "Os profissionais são contados por CRM único. "
-                        "Se o mesmo médico aparecer em dois relatórios, ele é contado apenas uma vez."
+                        "Agora vá em **💰 Faturamento** e selecione quais relatórios devem ser somados."
                     )
 
-                    por_arquivo = resumo_por_arquivo(
-                        dados_final,
-                        atividades_final,
-                    )
+    relatorios_existentes = relatorios_analisados_sessao()
+    if relatorios_existentes:
+        st.divider()
+        st.subheader("📚 Relatórios já analisados nesta sessão")
+        linhas = []
+        for _, relatorio in relatorios_existentes.items():
+            resumo_item = resumo_faturamento(relatorio["dados"], relatorio["atividades"])
+            linhas.append({
+                "Arquivo": relatorio["arquivo"],
+                "Município / Ente": relatorio["municipio"],
+                "Competência": relatorio["competencia"],
+                "Valor total": resumo_item["Valor total"],
+                "Plantões": resumo_item["Plantoes"],
+                "Consultas": resumo_item["Consultas faturamento"],
+                "Horas": resumo_item["Horas"],
+                "Profissionais": resumo_item["Profissionais"],
+            })
+        st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
 
-                    if not por_arquivo.empty:
-                        with st.expander(
-                            "Ver valores de cada relatório"
-                        ):
-                            st.dataframe(
-                                por_arquivo,
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+        if st.button("🗑️ Limpar relatórios analisados desta sessão"):
+            st.session_state["relatorios_analisados"] = {}
+            for chave in [
+                "relatorio_ativo_id", "dados_relatorio", "atividades_relatorio",
+                "diagnostico_relatorio", "municipio_relatorio", "responsavel_relatorio",
+                "observacoes_relatorio", "data_inicial_relatorio", "data_final_relatorio",
+                "periodo_relatorio", "competencia_faturamento", "arquivo_relatorio_atual",
+                "previa_faturamento_drive",
+            ]:
+                st.session_state.pop(chave, None)
+            st.rerun()
 
 elif pagina == "🔍 Análise":
     st.title("🔍 Análise")
-    if "dados_relatorio" not in st.session_state:
-        st.info("Primeiro envie e analise um relatório em 📤 Novo relatório.")
+    relatorios_sessao = relatorios_analisados_sessao()
+
+    if not relatorios_sessao:
+        st.info("Primeiro envie e analise pelo menos um relatório em 📤 Novo relatório.")
     else:
-        st.write("**Município:**", st.session_state.get("municipio_relatorio", "Não informado"))
-        arquivos_analise = st.session_state.get("arquivos_relatorio", [])
-        if arquivos_analise:
-            st.write(
-                "**Relatórios somados:**",
-                " | ".join(arquivos_analise),
-            )
-        st.write("**Responsável:**", st.session_state.get("responsavel_relatorio", "Não informado"))
-        st.write("**Período:**", st.session_state.get("periodo_relatorio", ""))
-        st.write("**Competência do faturamento:**", st.session_state.get("competencia_faturamento", ""))
+        opcoes = {
+            rotulo_relatorio_sessao(rid, relatorio): rid
+            for rid, relatorio in relatorios_sessao.items()
+        }
+        rotulos = list(opcoes.keys())
+        id_atual = st.session_state.get("relatorio_ativo_id")
+        indice_padrao = 0
+        if id_atual:
+            for indice, rotulo in enumerate(rotulos):
+                if opcoes[rotulo] == id_atual:
+                    indice_padrao = indice
+                    break
+
+        rotulo_escolhido = st.selectbox(
+            "Relatório para analisar", rotulos, index=indice_padrao
+        )
+        relatorio_id = opcoes[rotulo_escolhido]
+        ativar_relatorio_sessao(relatorio_id)
+        relatorio = relatorios_sessao[relatorio_id]
+
+        st.write("**Arquivo:**", relatorio["arquivo"])
+        st.write("**Município:**", relatorio["municipio"])
+        st.write("**Responsável:**", relatorio["responsavel"])
+        st.write("**Período:**", relatorio["periodo"])
+        st.write("**Competência do faturamento:**", relatorio["competencia"])
         st.divider()
-        mostrar_analise(st.session_state["dados_relatorio"], st.session_state.get("atividades_relatorio", pd.DataFrame()), st.session_state["diagnostico_relatorio"])
+        mostrar_analise(
+            relatorio["dados"], relatorio["atividades"], relatorio["diagnostico"]
+        )
 
 elif pagina == "⚠️ Divergências":
     st.title("⚠️ Divergências")
@@ -1945,197 +1911,188 @@ elif pagina == "✅ Validação":
 
 elif pagina == "💰 Faturamento":
     st.title("💰 Faturamento")
+    relatorios_sessao = relatorios_analisados_sessao()
 
-    dados = st.session_state.get("dados_relatorio", pd.DataFrame())
-    atividades = st.session_state.get("atividades_relatorio", pd.DataFrame())
-    competencia = st.session_state.get("competencia_faturamento", "")
-    municipio = st.session_state.get("municipio_relatorio", "")
-    responsavel = st.session_state.get("responsavel_relatorio", "")
-
-    if dados is None or dados.empty:
-        st.info("Primeiro envie e analise um relatório em 📤 Novo relatório.")
+    if not relatorios_sessao:
+        st.info("Primeiro envie e analise os relatórios em 📤 Novo relatório.")
     else:
-        resumo = resumo_faturamento(dados, atividades)
-
-        st.write("**Competência de faturamento:**", competencia)
-        st.write("**Município / ente do relatório:**", municipio)
-
-        arquivos_faturamento = st.session_state.get(
-            "arquivos_relatorio",
-            []
+        st.write(
+            "Selecione abaixo **quais relatórios devem ser somados** para este faturamento."
         )
 
-        if arquivos_faturamento:
-            st.write(
-                f"**Relatórios incluídos na soma:** {len(arquivos_faturamento)}"
-            )
-            with st.expander("Ver relatórios incluídos"):
-                for nome_arquivo in arquivos_faturamento:
-                    st.write("•", nome_arquivo)
+        opcoes = {
+            rotulo_relatorio_sessao(rid, relatorio): rid
+            for rid, relatorio in relatorios_sessao.items()
+        }
+        rotulos = list(opcoes.keys())
+        selecionados_rotulos = st.multiselect(
+            "Relatórios que entram neste faturamento",
+            rotulos,
+            default=rotulos[:1],
+            key="relatorios_selecionados_faturamento",
+        )
+        ids_selecionados = [opcoes[r] for r in selecionados_rotulos]
 
-            por_arquivo = resumo_por_arquivo(
-                dados,
-                atividades,
-            )
+        if not ids_selecionados:
+            st.warning("Selecione pelo menos um relatório.")
+        else:
+            try:
+                combinado = combinar_relatorios_para_faturamento(ids_selecionados)
+            except Exception as erro:
+                combinado = None
+                st.error(str(erro))
 
-            if not por_arquivo.empty:
-                st.subheader("🧮 Soma dos relatórios")
-                st.dataframe(
-                    por_arquivo,
-                    use_container_width=True,
-                    hide_index=True,
-                )
+            if combinado is not None:
+                resumo = combinado["resumo"]
+                municipio = combinado["municipio"]
+                competencia = combinado["competencia"]
+                responsavel = usuario_logado_nome()
+
+                chave_selecao = "|".join(sorted(ids_selecionados))
+                if st.session_state.get("_chave_selecao_faturamento") != chave_selecao:
+                    st.session_state["_chave_selecao_faturamento"] = chave_selecao
+                    st.session_state.pop("previa_faturamento_drive", None)
+
+                st.write("**Competência de faturamento:**", competencia)
+                st.write("**Município / ente:**", municipio)
+                st.write("**Quantidade de relatórios selecionados:**", len(ids_selecionados))
+
+                st.subheader("📄 Relatórios incluídos")
+                tabela_relatorios = combinado["por_relatorio"].copy()
+                if not tabela_relatorios.empty:
+                    st.dataframe(tabela_relatorios, use_container_width=True, hide_index=True)
+
+                st.subheader("🧮 TOTAL que será lançado")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Valor total", formatar_moeda(resumo["Valor total"]))
+                c2.metric("Plantões", formatar_numero(resumo["Plantoes"], 2))
+                c3.metric("Consultas", formatar_numero(resumo["Consultas faturamento"], 2))
+                c4.metric("Horas", formatar_numero(resumo["Horas"], 2))
+
+                c5, c6, c7, c8 = st.columns(4)
+                c5.metric("Quant. mês", formatar_numero(resumo["Meses"], 2))
+                c6.metric("Pacote consultas", formatar_numero(resumo["Pacotes"], 2))
+                c7.metric("Quant. dia", formatar_numero(resumo["Dias"], 2))
+                c8.metric("Profissionais únicos", resumo["Profissionais"])
 
                 st.caption(
-                    "A linha que será enviada para a planilha oficial usa o TOTAL "
-                    "de todos os relatórios acima. Profissionais são deduplicados pelo CRM."
+                    "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
+                    "Os profissionais são deduplicados por CRM entre os relatórios selecionados."
                 )
-
-        st.subheader("📊 TOTAL que será lançado")
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Valor total", formatar_moeda(resumo["Valor total"]))
-        c2.metric("Plantões", formatar_numero(resumo["Plantoes"], 2))
-        c3.metric("Consultas", formatar_numero(resumo["Consultas faturamento"], 2))
-        c4.metric("Horas", formatar_numero(resumo["Horas"], 2))
-
-        c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Quant. mês", formatar_numero(resumo["Meses"], 2))
-        c6.metric("Pacote consultas", formatar_numero(resumo["Pacotes"], 2))
-        c7.metric("Quant. dia", formatar_numero(resumo["Dias"], 2))
-        c8.metric("Profissionais únicos", resumo["Profissionais"])
-
-        st.caption(
-            "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
-            "Nº PROF. MÉDICOS usa CRMs únicos."
-        )
-
-        # ----------------------------------------------------
-        # CONEXÃO COM GOOGLE PLANILHAS VIA APPS SCRIPT
-        # ----------------------------------------------------
-        try:
-            apps_script_url = st.secrets["apps_script"]["url"]
-            apps_script_chave = st.secrets["apps_script"]["chave"]
-            configurado = True
-        except Exception:
-            apps_script_url = ""
-            apps_script_chave = ""
-            configurado = False
-
-        st.subheader("☁️ Planilha oficial no Google Drive")
-
-        if not configurado:
-            st.error(
-                "A conexão com a planilha oficial ainda não está configurada nos Secrets do Streamlit."
-            )
-            st.code(
-                '[apps_script]\nurl = "COLE_A_URL_DO_WEB_APP_AQUI"\nchave = "COLE_A_MESMA_CHAVE_API_DO_APPS_SCRIPT_AQUI"'
-            )
-        else:
-            st.success("✅ Conexão do Apps Script configurada no servidor.")
-
-            def chamar_apps_script(acao, confirmar_substituicao=False):
-                payload = {
-                    "chave": apps_script_chave,
-                    "acao": acao,
-                    "competencia": competencia,
-                    "municipio": municipio,
-                    "responsavel": responsavel,
-                    "valor_total": resumo["Valor total"],
-                    "plantoes": resumo["Plantoes"],
-                    "consultas": resumo["Consultas faturamento"],
-                    "horas": resumo["Horas"],
-                    "quant_mes": resumo["Meses"],
-                    "pacotes": resumo["Pacotes"],
-                    "quant_dia": resumo["Dias"],
-                    "profissionais": resumo["Profissionais"],
-                    "confirmar_substituicao": confirmar_substituicao,
-                }
-
-                resposta = requests.post(
-                    apps_script_url,
-                    json=payload,
-                    timeout=45,
-                    allow_redirects=True,
-                )
-                resposta.raise_for_status()
 
                 try:
-                    return resposta.json()
+                    apps_script_url = st.secrets["apps_script"]["url"]
+                    apps_script_chave = st.secrets["apps_script"]["chave"]
+                    configurado = True
                 except Exception:
-                    raise RuntimeError(
-                        "O Apps Script respondeu, mas não retornou JSON válido. "
-                        "Confira se a implantação está ativa e se a URL termina em /exec."
+                    apps_script_url = ""
+                    apps_script_chave = ""
+                    configurado = False
+
+                st.subheader("☁️ Planilha oficial no Google Drive")
+                if not configurado:
+                    st.error(
+                        "A conexão com a planilha oficial ainda não está configurada nos Secrets do Streamlit."
                     )
-
-            if st.button("🔎 Conferir linha na planilha oficial"):
-                try:
-                    with st.spinner("Consultando a planilha oficial..."):
-                        previa = chamar_apps_script("previsualizar")
-                    st.session_state["previa_faturamento_drive"] = previa
-                except Exception as erro:
-                    st.error("Não consegui consultar a planilha oficial.")
-                    with st.expander("Ver detalhes do erro"):
-                        st.code(str(erro))
-
-            previa = st.session_state.get("previa_faturamento_drive")
-
-            if previa:
-                if not previa.get("sucesso", False):
-                    st.error(previa.get("mensagem", "O Apps Script retornou um erro."))
                 else:
-                    st.write("**Linha encontrada:**", previa.get("linha", "—"))
-                    st.write("**Mês identificado:**", previa.get("mes", "—"))
-                    st.write("**Município identificado:**", previa.get("municipio", municipio))
+                    st.success("✅ Conexão do Apps Script configurada no servidor.")
 
-                    dados_existentes = previa.get("dados_existentes", {}) or {}
-                    ja_possui_dados = bool(previa.get("ja_possui_dados", False))
-
-                    with st.expander("Ver dados que já existem nessa linha"):
-                        st.json(dados_existentes)
-
-                    if ja_possui_dados:
-                        st.warning(
-                            "⚠️ Essa linha já possui dados. O lançamento só será feito se você confirmar a substituição."
+                    def chamar_apps_script(acao, confirmar_substituicao=False):
+                        payload = {
+                            "chave": apps_script_chave,
+                            "acao": acao,
+                            "competencia": competencia,
+                            "municipio": municipio,
+                            "responsavel": responsavel,
+                            "valor_total": resumo["Valor total"],
+                            "plantoes": resumo["Plantoes"],
+                            "consultas": resumo["Consultas faturamento"],
+                            "horas": resumo["Horas"],
+                            "quant_mes": resumo["Meses"],
+                            "pacotes": resumo["Pacotes"],
+                            "quant_dia": resumo["Dias"],
+                            "profissionais": resumo["Profissionais"],
+                            "confirmar_substituicao": confirmar_substituicao,
+                        }
+                        resposta = requests.post(
+                            apps_script_url,
+                            json=payload,
+                            timeout=45,
+                            allow_redirects=True,
                         )
-                        confirmar = st.checkbox(
-                            "Confirmo que desejo substituir os dados existentes desta linha",
-                            key="confirmar_substituicao_drive",
-                        )
-                    else:
-                        st.success("✅ A linha encontrada está sem faturamento lançado.")
-                        confirmar = True
+                        resposta.raise_for_status()
+                        try:
+                            return resposta.json()
+                        except Exception:
+                            raise RuntimeError(
+                                "O Apps Script respondeu, mas não retornou JSON válido. "
+                                "Confira se a implantação está ativa e se a URL termina em /exec."
+                            )
 
-                    st.info(
-                        "Ao lançar, o Apps Script cria um backup da planilha, registra o histórico "
-                        "e depois atualiza a linha oficial."
-                    )
+                    if st.button("🔎 Conferir linha na planilha oficial"):
+                        try:
+                            with st.spinner("Consultando a planilha oficial..."):
+                                previa = chamar_apps_script("previsualizar")
+                            st.session_state["previa_faturamento_drive"] = previa
+                        except Exception as erro:
+                            st.error("Não consegui consultar a planilha oficial.")
+                            with st.expander("Ver detalhes do erro"):
+                                st.code(str(erro))
 
-                    if st.button("💾 LANÇAR NA PLANILHA OFICIAL", type="primary"):
-                        if not confirmar:
-                            st.error("Marque a confirmação antes de substituir dados existentes.")
+                    previa = st.session_state.get("previa_faturamento_drive")
+                    if previa:
+                        if not previa.get("sucesso", False):
+                            st.error(previa.get("mensagem", "O Apps Script retornou um erro."))
                         else:
-                            try:
-                                with st.spinner("Criando backup e lançando no Google Drive..."):
-                                    resultado = chamar_apps_script(
-                                        "lancar",
-                                        confirmar_substituicao=bool(confirmar),
-                                    )
+                            st.write("**Linha encontrada:**", previa.get("linha", "—"))
+                            st.write("**Mês identificado:**", previa.get("mes", "—"))
+                            st.write("**Município identificado:**", previa.get("municipio", municipio))
 
-                                if resultado.get("sucesso", False):
-                                    st.success("✅ Faturamento lançado com sucesso na planilha oficial.")
-                                    st.write("**Competência:**", resultado.get("competencia", competencia))
-                                    st.write("**Município:**", resultado.get("municipio", municipio))
-                                    st.write("**Linha atualizada:**", resultado.get("linha", "—"))
+                            dados_existentes = previa.get("dados_existentes", {}) or {}
+                            ja_possui_dados = bool(previa.get("ja_possui_dados", False))
 
-                                    st.session_state.pop("previa_faturamento_drive", None)
+                            with st.expander("Ver dados que já existem nessa linha"):
+                                st.json(dados_existentes)
+
+                            if ja_possui_dados:
+                                st.warning(
+                                    "⚠️ Essa linha já possui dados. O lançamento só será feito se você confirmar a substituição."
+                                )
+                                confirmar = st.checkbox(
+                                    "Confirmo que desejo substituir os dados existentes desta linha",
+                                    key="confirmar_substituicao_drive",
+                                )
+                            else:
+                                st.success("✅ A linha encontrada está sem faturamento lançado.")
+                                confirmar = True
+
+                            st.info(
+                                "Ao lançar, o Apps Script cria um backup da planilha, registra o histórico "
+                                "e atualiza a linha oficial com o TOTAL dos relatórios selecionados."
+                            )
+
+                            if st.button("💾 LANÇAR TOTAL NA PLANILHA OFICIAL", type="primary"):
+                                if not confirmar:
+                                    st.error("Marque a confirmação antes de substituir dados existentes.")
                                 else:
-                                    st.error(resultado.get("mensagem", "O lançamento não foi concluído."))
-
-                            except Exception as erro:
-                                st.error("Não consegui lançar na planilha oficial.")
-                                with st.expander("Ver detalhes do erro"):
-                                    st.code(str(erro))
+                                    try:
+                                        with st.spinner("Criando backup e lançando o total..."):
+                                            resultado = chamar_apps_script(
+                                                "lancar",
+                                                confirmar_substituicao=bool(confirmar),
+                                            )
+                                        if resultado.get("sucesso", False):
+                                            st.success("✅ Total lançado com sucesso na planilha oficial.")
+                                            st.write("**Competência:**", resultado.get("competencia", competencia))
+                                            st.write("**Município:**", resultado.get("municipio", municipio))
+                                            st.write("**Linha atualizada:**", resultado.get("linha", "—"))
+                                            st.session_state.pop("previa_faturamento_drive", None)
+                                        else:
+                                            st.error(resultado.get("mensagem", "O lançamento não foi concluído."))
+                                    except Exception as erro:
+                                        st.error("Não consegui lançar na planilha oficial.")
+                                        with st.expander("Ver detalhes do erro"):
+                                            st.code(str(erro))
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
