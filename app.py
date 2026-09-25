@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.7"
+VERSAO = "2.8"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -123,7 +123,7 @@ def usuario_logado_perfil():
 def fazer_logout():
     chaves = [
         "autenticado", "usuario_login", "usuario_nome", "usuario_perfil",
-        "previa_faturamento_drive", "confirmar_substituicao_drive"
+        "previa_faturamento_drive", "confirmar_substituicao_drive", "confirmar_soma_drive"
     ]
     for chave in chaves:
         st.session_state.pop(chave, None)
@@ -1997,7 +1997,7 @@ elif pagina == "💰 Faturamento":
                 else:
                     st.success("✅ Conexão do Apps Script configurada no servidor.")
 
-                    def chamar_apps_script(acao, confirmar_substituicao=False):
+                    def chamar_apps_script(acao, somar_existente=False):
                         payload = {
                             "chave": apps_script_chave,
                             "acao": acao,
@@ -2012,7 +2012,7 @@ elif pagina == "💰 Faturamento":
                             "pacotes": resumo["Pacotes"],
                             "quant_dia": resumo["Dias"],
                             "profissionais": resumo["Profissionais"],
-                            "confirmar_substituicao": confirmar_substituicao,
+                            "somar_existente": somar_existente,
                         }
                         resposta = requests.post(
                             apps_script_url,
@@ -2056,11 +2056,97 @@ elif pagina == "💰 Faturamento":
 
                             if ja_possui_dados:
                                 st.warning(
-                                    "⚠️ Essa linha já possui dados. O lançamento só será feito se você confirmar a substituição."
+                                    "⚠️ Essa linha já possui dados. O novo faturamento NÃO vai substituir "
+                                    "o que já existe: ele será SOMADO aos valores atuais da própria linha."
                                 )
+
+                                existente_valor = converter_numero(
+                                    dados_existentes.get("valor_total", 0)
+                                )
+                                existente_plantoes = converter_numero(
+                                    dados_existentes.get("plantoes", 0)
+                                )
+                                existente_consultas = converter_numero(
+                                    dados_existentes.get("consultas", 0)
+                                )
+                                existente_horas = converter_numero(
+                                    dados_existentes.get("horas", 0)
+                                )
+                                existente_mes = converter_numero(
+                                    dados_existentes.get("quant_mes", 0)
+                                )
+                                existente_pacotes = converter_numero(
+                                    dados_existentes.get("pacotes", 0)
+                                )
+                                existente_dia = converter_numero(
+                                    dados_existentes.get("quant_dia", 0)
+                                )
+                                existente_profissionais = converter_numero(
+                                    dados_existentes.get("profissionais", 0)
+                                )
+
+                                st.subheader("➕ Prévia da soma na linha")
+
+                                soma_preview = pd.DataFrame([
+                                    {
+                                        "Campo": "Valor total",
+                                        "Já existe": existente_valor,
+                                        "Novo lançamento": resumo["Valor total"],
+                                        "Após somar": existente_valor + resumo["Valor total"],
+                                    },
+                                    {
+                                        "Campo": "Plantões",
+                                        "Já existe": existente_plantoes,
+                                        "Novo lançamento": resumo["Plantoes"],
+                                        "Após somar": existente_plantoes + resumo["Plantoes"],
+                                    },
+                                    {
+                                        "Campo": "Consultas",
+                                        "Já existe": existente_consultas,
+                                        "Novo lançamento": resumo["Consultas faturamento"],
+                                        "Após somar": existente_consultas + resumo["Consultas faturamento"],
+                                    },
+                                    {
+                                        "Campo": "Horas",
+                                        "Já existe": existente_horas,
+                                        "Novo lançamento": resumo["Horas"],
+                                        "Após somar": existente_horas + resumo["Horas"],
+                                    },
+                                    {
+                                        "Campo": "Quant. mês",
+                                        "Já existe": existente_mes,
+                                        "Novo lançamento": resumo["Meses"],
+                                        "Após somar": existente_mes + resumo["Meses"],
+                                    },
+                                    {
+                                        "Campo": "Pacotes",
+                                        "Já existe": existente_pacotes,
+                                        "Novo lançamento": resumo["Pacotes"],
+                                        "Após somar": existente_pacotes + resumo["Pacotes"],
+                                    },
+                                    {
+                                        "Campo": "Quant. dia",
+                                        "Já existe": existente_dia,
+                                        "Novo lançamento": resumo["Dias"],
+                                        "Após somar": existente_dia + resumo["Dias"],
+                                    },
+                                    {
+                                        "Campo": "Profissionais",
+                                        "Já existe": existente_profissionais,
+                                        "Novo lançamento": resumo["Profissionais"],
+                                        "Após somar": existente_profissionais + resumo["Profissionais"],
+                                    },
+                                ])
+
+                                st.dataframe(
+                                    soma_preview,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+
                                 confirmar = st.checkbox(
-                                    "Confirmo que desejo substituir os dados existentes desta linha",
-                                    key="confirmar_substituicao_drive",
+                                    "Confirmo que desejo SOMAR este faturamento aos dados já existentes nessa linha",
+                                    key="confirmar_soma_drive",
                                 )
                             else:
                                 st.success("✅ A linha encontrada está sem faturamento lançado.")
@@ -2068,21 +2154,24 @@ elif pagina == "💰 Faturamento":
 
                             st.info(
                                 "Ao lançar, o Apps Script cria um backup da planilha, registra o histórico "
-                                "e atualiza a linha oficial com o TOTAL dos relatórios selecionados."
+                                "e, se a linha já tiver dados, soma o novo faturamento aos valores existentes."
                             )
 
-                            if st.button("💾 LANÇAR TOTAL NA PLANILHA OFICIAL", type="primary"):
+                            if st.button("💾 LANÇAR / SOMAR NA PLANILHA OFICIAL", type="primary"):
                                 if not confirmar:
-                                    st.error("Marque a confirmação antes de substituir dados existentes.")
+                                    st.error("Marque a confirmação antes de somar aos dados existentes.")
                                 else:
                                     try:
-                                        with st.spinner("Criando backup e lançando o total..."):
+                                        with st.spinner("Criando backup e atualizando a linha..."):
                                             resultado = chamar_apps_script(
                                                 "lancar",
-                                                confirmar_substituicao=bool(confirmar),
+                                                somar_existente=bool(ja_possui_dados),
                                             )
                                         if resultado.get("sucesso", False):
-                                            st.success("✅ Total lançado com sucesso na planilha oficial.")
+                                            if ja_possui_dados:
+                                                st.success("✅ Novo faturamento somado com sucesso aos dados da linha.")
+                                            else:
+                                                st.success("✅ Faturamento lançado com sucesso na planilha oficial.")
                                             st.write("**Competência:**", resultado.get("competencia", competencia))
                                             st.write("**Município:**", resultado.get("municipio", municipio))
                                             st.write("**Linha atualizada:**", resultado.get("linha", "—"))
