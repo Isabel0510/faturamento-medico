@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.1"
+VERSAO = "3.2"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -191,17 +191,20 @@ def exigir_login():
 def paginas_permitidas(perfil):
     todas = [
         "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório", "🔍 Análise",
-        "⚠️ Divergências", "✅ Validação", "💰 Faturamento", "📚 Histórico", "⚙️ Configurações"
+        "⚠️ Divergências", "✅ Validação", "💰 Faturamento", "👨‍⚕️ Pesquisa de médicos",
+        "📚 Histórico", "⚙️ Configurações"
     ]
 
     permissoes = {
         "Lançador": [
             "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
-            "🔍 Análise", "⚠️ Divergências", "💰 Faturamento", "📚 Histórico"
+            "🔍 Análise", "⚠️ Divergências", "💰 Faturamento",
+            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
         ],
         "Validador": [
             "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
-            "🔍 Análise", "⚠️ Divergências", "✅ Validação", "📚 Histórico"
+            "🔍 Análise", "⚠️ Divergências", "✅ Validação",
+            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
         ],
         "Administrador": todas,
     }
@@ -1452,6 +1455,188 @@ def calcular_valor_total_faturamento(atividades, dados):
     return round(somar_coluna_segura(dados, "Valor bruto"), 2)
 
 
+def montar_historico_medicos(dados, atividades):
+    """
+    Monta o histórico permanente de médicos a partir apenas das linhas
+    que realmente possuem produção/valor. O arquivo original não é salvo.
+    """
+    if dados is None or dados.empty:
+        return []
+
+    base = dados.copy()
+
+    colunas_numericas = [
+        "Plantoes",
+        "Consultas",
+        "Procedimentos",
+        "Exames",
+        "Interconsultas",
+        "Pacotes",
+        "Horas",
+        "Meses",
+        "Dias",
+        "Valor bruto",
+        "Valor final",
+    ]
+
+    for coluna in colunas_numericas:
+        if coluna not in base.columns:
+            base[coluna] = 0
+        base[coluna] = pd.to_numeric(
+            base[coluna],
+            errors="coerce",
+        ).fillna(0)
+
+    # Agrupa descrições/códigos de atividades na mesma linha do relatório.
+    detalhes_por_linha = {}
+
+    if atividades is not None and not atividades.empty:
+        atividades_base = atividades.copy()
+
+        for _, atividade in atividades_base.iterrows():
+            chave = (
+                str(atividade.get("Arquivo", "")),
+                str(atividade.get("Aba", "")),
+                int(converter_numero(atividade.get("Linha do Excel", 0))),
+                str(atividade.get("CRM_ID", "")),
+            )
+
+            codigo = str(atividade.get("Codigo", "") or "").strip()
+            servico = str(atividade.get("Servico", "") or "").strip()
+            tipo = str(atividade.get("Tipo", "") or "").strip()
+            quantidade = converter_numero(
+                atividade.get("Quantidade", 0)
+            )
+
+            partes = []
+
+            if codigo:
+                partes.append(codigo)
+            if servico:
+                partes.append(servico)
+            elif tipo:
+                partes.append(tipo)
+
+            descricao = " - ".join(partes)
+
+            if quantidade:
+                if descricao:
+                    descricao += f" ({formatar_numero(quantidade, 2)})"
+                else:
+                    descricao = f"Quantidade {formatar_numero(quantidade, 2)}"
+
+            if descricao:
+                detalhes_por_linha.setdefault(
+                    chave,
+                    []
+                ).append(descricao)
+
+    historico = []
+
+    for _, linha in base.iterrows():
+        if not any(
+            abs(converter_numero(linha.get(coluna, 0))) > 0
+            for coluna in colunas_numericas
+        ):
+            continue
+
+        chave = (
+            str(linha.get("Arquivo", "")),
+            str(linha.get("Aba", "")),
+            int(converter_numero(linha.get("Linha do Excel", 0))),
+            str(linha.get("CRM_ID", "")),
+        )
+
+        detalhes = list(
+            dict.fromkeys(
+                detalhes_por_linha.get(
+                    chave,
+                    []
+                )
+            )
+        )
+
+        historico.append({
+            "profissional": str(
+                linha.get("Profissional", "")
+            ).strip(),
+            "crm": str(
+                linha.get("CRM", "")
+            ).strip(),
+            "arquivo": str(
+                linha.get("Arquivo", "")
+            ).strip(),
+            "aba": str(
+                linha.get("Aba", "")
+            ).strip(),
+            "linha_excel": int(
+                converter_numero(
+                    linha.get("Linha do Excel", 0)
+                )
+            ),
+            "plantoes": float(
+                converter_numero(
+                    linha.get("Plantoes", 0)
+                )
+            ),
+            "consultas": float(
+                converter_numero(
+                    linha.get("Consultas", 0)
+                )
+            ),
+            "procedimentos": float(
+                converter_numero(
+                    linha.get("Procedimentos", 0)
+                )
+            ),
+            "exames": float(
+                converter_numero(
+                    linha.get("Exames", 0)
+                )
+            ),
+            "interconsultas": float(
+                converter_numero(
+                    linha.get("Interconsultas", 0)
+                )
+            ),
+            "pacotes": float(
+                converter_numero(
+                    linha.get("Pacotes", 0)
+                )
+            ),
+            "horas": float(
+                converter_numero(
+                    linha.get("Horas", 0)
+                )
+            ),
+            "meses": float(
+                converter_numero(
+                    linha.get("Meses", 0)
+                )
+            ),
+            "dias": float(
+                converter_numero(
+                    linha.get("Dias", 0)
+                )
+            ),
+            "valor_bruto": float(
+                converter_numero(
+                    linha.get("Valor bruto", 0)
+                )
+            ),
+            "valor_final": float(
+                converter_numero(
+                    linha.get("Valor final", 0)
+                )
+            ),
+            "atividades": " | ".join(
+                detalhes
+            ),
+        })
+
+    return historico
+
+
 def resumo_faturamento(dados, atividades):
     consultas_faturamento = (
         somar_coluna_segura(dados, "Consultas")
@@ -2066,6 +2251,11 @@ elif pagina == "💰 Faturamento":
                 competencia = combinado["competencia"]
                 responsavel = usuario_logado_nome()
 
+                historico_medicos_lancamento = montar_historico_medicos(
+                    combinado["dados"],
+                    combinado["atividades"],
+                )
+
                 # Mantém cada relatório separado também no envio ao Apps Script.
                 # Assim, se forem selecionados vários relatórios de uma vez,
                 # a célula pode ficar, por exemplo: =120000+10000+2000
@@ -2156,6 +2346,9 @@ elif pagina == "💰 Faturamento":
                             "somar_existente": somar_existente,
                             "parcelas_relatorios": parcelas_relatorios,
                         }
+
+                        if acao == "lancar":
+                            payload["historico_medicos"] = historico_medicos_lancamento
                         resposta = requests.post(
                             apps_script_url,
                             json=payload,
@@ -2317,6 +2510,22 @@ elif pagina == "💰 Faturamento":
                                             st.write("**Competência:**", resultado.get("competencia", competencia))
                                             st.write("**Município:**", resultado.get("municipio", municipio))
                                             st.write("**Linha atualizada:**", resultado.get("linha", "—"))
+
+                                            aviso_medicos = str(
+                                                resultado.get(
+                                                    "aviso_historico_medicos",
+                                                    "",
+                                                )
+                                                or ""
+                                            ).strip()
+
+                                            if aviso_medicos:
+                                                st.warning(aviso_medicos)
+                                            else:
+                                                st.caption(
+                                                    "O histórico individual dos médicos deste faturamento foi atualizado."
+                                                )
+
                                             st.session_state.pop("previa_faturamento_drive", None)
                                         else:
                                             st.error(resultado.get("mensagem", "O lançamento não foi concluído."))
@@ -2324,6 +2533,333 @@ elif pagina == "💰 Faturamento":
                                         st.error("Não consegui lançar na planilha oficial.")
                                         with st.expander("Ver detalhes do erro"):
                                             st.code(str(erro))
+
+elif pagina == "👨‍⚕️ Pesquisa de médicos":
+    st.title("👨‍⚕️ Pesquisa de médicos")
+    st.write(
+        "Pesquise pelo **nome do médico** ou pelo **CRM** para consultar "
+        "os lançamentos que já foram faturados pelo sistema."
+    )
+    st.caption(
+        "Somente médicos com produção real são gravados. "
+        "Os arquivos Excel originais não são armazenados."
+    )
+
+    try:
+        pesquisa_url = st.secrets["apps_script"]["url"]
+        pesquisa_chave = st.secrets["apps_script"]["chave"]
+        pesquisa_configurada = True
+    except Exception:
+        pesquisa_url = ""
+        pesquisa_chave = ""
+        pesquisa_configurada = False
+
+    if not pesquisa_configurada:
+        st.error(
+            "A conexão com a planilha oficial ainda não está configurada nos Secrets do Streamlit."
+        )
+    else:
+        termo_medico = st.text_input(
+            "Nome do médico ou CRM",
+            placeholder="Ex.: João da Silva ou 12345",
+            key="termo_pesquisa_medico",
+        )
+
+        if st.button(
+            "🔎 Pesquisar médico",
+            type="primary",
+            use_container_width=True,
+        ):
+            termo = termo_medico.strip()
+
+            if len(termo) < 2:
+                st.warning(
+                    "Digite pelo menos 2 caracteres do nome ou CRM."
+                )
+            else:
+                try:
+                    with st.spinner(
+                        "Consultando o histórico médico..."
+                    ):
+                        resposta = requests.post(
+                            pesquisa_url,
+                            json={
+                                "chave": pesquisa_chave,
+                                "acao": "pesquisar_medico",
+                                "termo": termo,
+                            },
+                            timeout=45,
+                            allow_redirects=True,
+                        )
+
+                        resposta.raise_for_status()
+
+                        retorno = resposta.json()
+
+                    if not retorno.get(
+                        "sucesso",
+                        False,
+                    ):
+                        raise RuntimeError(
+                            retorno.get(
+                                "mensagem",
+                                "Não foi possível pesquisar o médico.",
+                            )
+                        )
+
+                    st.session_state[
+                        "resultado_pesquisa_medico"
+                    ] = retorno.get(
+                        "registros",
+                        []
+                    )
+                    st.session_state[
+                        "termo_pesquisa_medico_executado"
+                    ] = termo
+
+                except Exception as erro:
+                    st.error(
+                        "Não consegui consultar o histórico médico."
+                    )
+                    with st.expander(
+                        "Ver detalhes do erro"
+                    ):
+                        st.code(
+                            str(erro)
+                        )
+
+        registros = st.session_state.get(
+            "resultado_pesquisa_medico",
+            []
+        )
+
+        termo_executado = st.session_state.get(
+            "termo_pesquisa_medico_executado",
+            ""
+        )
+
+        if termo_executado:
+            st.subheader(
+                f"Resultados para: {termo_executado}"
+            )
+
+            if not registros:
+                st.info(
+                    "Nenhum lançamento faturado foi encontrado para esse nome/CRM."
+                )
+            else:
+                medicos_df = pd.DataFrame(
+                    registros
+                )
+
+                colunas_numericas = [
+                    "Plantões",
+                    "Consultas",
+                    "Procedimentos",
+                    "Exames",
+                    "Interconsultas",
+                    "Pacotes",
+                    "Horas",
+                    "Meses",
+                    "Dias",
+                    "Valor bruto",
+                    "Valor final",
+                ]
+
+                for coluna in colunas_numericas:
+                    if coluna not in medicos_df.columns:
+                        medicos_df[coluna] = 0
+                    medicos_df[coluna] = pd.to_numeric(
+                        medicos_df[coluna],
+                        errors="coerce",
+                    ).fillna(0)
+
+                if "Profissional" not in medicos_df.columns:
+                    medicos_df["Profissional"] = ""
+                if "CRM" not in medicos_df.columns:
+                    medicos_df["CRM"] = ""
+                if "Competência" not in medicos_df.columns:
+                    medicos_df["Competência"] = ""
+                if "Município / Ente" not in medicos_df.columns:
+                    medicos_df["Município / Ente"] = ""
+
+                # Filtros locais após a busca.
+                f1, f2 = st.columns(2)
+
+                competencias_medico = sorted(
+                    [
+                        valor
+                        for valor in medicos_df[
+                            "Competência"
+                        ].astype(str).unique()
+                        if valor.strip()
+                    ],
+                    reverse=True,
+                )
+
+                municipios_medico = sorted(
+                    [
+                        valor
+                        for valor in medicos_df[
+                            "Município / Ente"
+                        ].astype(str).unique()
+                        if valor.strip()
+                    ]
+                )
+
+                filtro_comp = f1.selectbox(
+                    "Competência",
+                    ["Todas"] + competencias_medico,
+                    key="filtro_comp_medico",
+                )
+
+                filtro_mun = f2.selectbox(
+                    "Município / ente",
+                    ["Todos"] + municipios_medico,
+                    key="filtro_mun_medico",
+                )
+
+                exibicao = medicos_df.copy()
+
+                if filtro_comp != "Todas":
+                    exibicao = exibicao[
+                        exibicao["Competência"].astype(str)
+                        == filtro_comp
+                    ]
+
+                if filtro_mun != "Todos":
+                    exibicao = exibicao[
+                        exibicao["Município / Ente"].astype(str)
+                        == filtro_mun
+                    ]
+
+                crms_validos = (
+                    exibicao["CRM"]
+                    .astype(str)
+                    .str.strip()
+                    .replace("", pd.NA)
+                    .dropna()
+                    .nunique()
+                )
+
+                consultas_total = (
+                    exibicao["Consultas"].sum()
+                    + exibicao["Procedimentos"].sum()
+                    + exibicao["Exames"].sum()
+                    + exibicao["Interconsultas"].sum()
+                )
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric(
+                    "Médicos encontrados",
+                    int(crms_validos),
+                )
+                m2.metric(
+                    "Registros",
+                    len(exibicao),
+                )
+                m3.metric(
+                    "Horas",
+                    formatar_numero(
+                        exibicao["Horas"].sum(),
+                        2,
+                    ),
+                )
+                m4.metric(
+                    "Consultas / atividades",
+                    formatar_numero(
+                        consultas_total,
+                        2,
+                    ),
+                )
+
+                m5, m6, m7, m8 = st.columns(4)
+                m5.metric(
+                    "Plantões",
+                    formatar_numero(
+                        exibicao["Plantões"].sum(),
+                        2,
+                    ),
+                )
+                m6.metric(
+                    "Procedimentos",
+                    formatar_numero(
+                        exibicao["Procedimentos"].sum(),
+                        2,
+                    ),
+                )
+                m7.metric(
+                    "Exames",
+                    formatar_numero(
+                        exibicao["Exames"].sum(),
+                        2,
+                    ),
+                )
+                m8.metric(
+                    "Pacotes",
+                    formatar_numero(
+                        exibicao["Pacotes"].sum(),
+                        2,
+                    ),
+                )
+
+                st.subheader(
+                    "📋 Tudo que foi lançado"
+                )
+
+                ordem_colunas = [
+                    "Data/Hora",
+                    "Profissional",
+                    "CRM",
+                    "Competência",
+                    "Município / Ente",
+                    "Arquivo",
+                    "Aba",
+                    "Linha do Excel",
+                    "Plantões",
+                    "Consultas",
+                    "Procedimentos",
+                    "Exames",
+                    "Interconsultas",
+                    "Pacotes",
+                    "Horas",
+                    "Meses",
+                    "Dias",
+                    "Valor bruto",
+                    "Valor final",
+                    "Atividades / Códigos",
+                ]
+
+                colunas_exibir = [
+                    coluna
+                    for coluna in ordem_colunas
+                    if coluna in exibicao.columns
+                ]
+
+                st.dataframe(
+                    exibicao[
+                        colunas_exibir
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                csv_medico = exibicao[
+                    colunas_exibir
+                ].to_csv(
+                    index=False
+                ).encode(
+                    "utf-8-sig"
+                )
+
+                st.download_button(
+                    "⬇️ Baixar resultado em CSV",
+                    data=csv_medico,
+                    file_name="historico_medico.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
 
 elif pagina == "📚 Histórico":
     st.title("📚 Histórico")
