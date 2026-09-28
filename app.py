@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.0"
+VERSAO = "3.1"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -457,11 +457,12 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
                 for coluna in colunas_prod[campo]:
                     producao[campo] += converter_numero(planilha.iat[numero_linha, coluna])
 
-            # Modelo largo: agora cria uma linha separada por código/atividade.
-            atividades.extend(extrair_atividades_largas(
+            # Modelo largo: cria atividades apenas quando existe quantidade lançada.
+            atividades_linha = extrair_atividades_largas(
                 planilha, numero_linha, linha_cabecalho, colunas_prod,
                 nome, crm, nome_arquivo, nome_aba
-            ))
+            )
+            atividades.extend(atividades_linha)
 
             # Modelo genérico (UNIDADE DE MEDIDA + QUANT + CÓDIGO).
             codigo = planilha.iat[numero_linha, colunas_gen["codigo"]] if colunas_gen["codigo"] is not None else ""
@@ -490,11 +491,34 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
                     "Arquivo": nome_arquivo, "Aba": nome_aba, "Linha do Excel": numero_linha + 1,
                 })
 
-            registros.append({
-                "Profissional": str(nome).strip(), "CRM": limpar_crm(crm), "CRM_ID": chave_crm(crm),
-                "Arquivo": nome_arquivo, "Aba": nome_aba, "Linha do Excel": numero_linha + 1,
-                **producao, "Valor bruto": valor_bruto, "Valor final": valor_final,
-            })
+            # Só considera o médico como "com lançamento" quando existe produção real
+            # ou algum valor financeiro preenchido naquela linha.
+            tem_producao = any(
+                abs(converter_numero(valor)) > 0
+                for valor in producao.values()
+            )
+
+            tem_valor = (
+                abs(converter_numero(valor_bruto)) > 0
+                or abs(converter_numero(valor_final)) > 0
+            )
+
+            tem_atividade = bool(atividades_linha) or (
+                quantidade != 0 and (codigo_n or servico_n or categoria)
+            )
+
+            if tem_producao or tem_valor or tem_atividade:
+                registros.append({
+                    "Profissional": str(nome).strip(),
+                    "CRM": limpar_crm(crm),
+                    "CRM_ID": chave_crm(crm),
+                    "Arquivo": nome_arquivo,
+                    "Aba": nome_aba,
+                    "Linha do Excel": numero_linha + 1,
+                    **producao,
+                    "Valor bruto": valor_bruto,
+                    "Valor final": valor_final,
+                })
 
     dados = pd.DataFrame(registros)
     atividades_df = pd.DataFrame(atividades)
@@ -1228,6 +1252,71 @@ def localizar_crms_com_varios_lancamentos(dados):
     return pd.DataFrame(resultado)
 
 
+def medicos_com_lancamento(dados):
+    """Retorna somente médicos/CRMs que possuem ao menos um lançamento real."""
+    if dados is None or dados.empty:
+        return pd.DataFrame(
+            columns=["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+        )
+
+    base = dados.copy()
+
+    colunas_producao = [
+        "Plantoes",
+        "Consultas",
+        "Procedimentos",
+        "Exames",
+        "Interconsultas",
+        "Pacotes",
+        "Horas",
+        "Meses",
+        "Dias",
+        "Valor bruto",
+        "Valor final",
+    ]
+
+    for coluna in colunas_producao:
+        if coluna not in base.columns:
+            base[coluna] = 0
+        base[coluna] = pd.to_numeric(
+            base[coluna],
+            errors="coerce",
+        ).fillna(0)
+
+    mascara = (
+        base[colunas_producao]
+        .abs()
+        .sum(axis=1)
+        > 0
+    )
+
+    base = base[mascara].copy()
+
+    if base.empty:
+        return pd.DataFrame(
+            columns=["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+        )
+
+    resultado = (
+        base.groupby(
+            ["CRM_ID", "CRM"],
+            dropna=False,
+            as_index=False,
+        )
+        .agg(
+            Profissional=("Profissional", "first"),
+            **{"Quantidade de linhas": ("Profissional", "size")},
+        )
+    )
+
+    return resultado[
+        ["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+    ].sort_values(
+        ["Profissional", "CRM"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
 def mostrar_analise(dados, atividades, diagnostico):
     if dados is None or dados.empty:
         st.error("Nenhum profissional válido foi identificado.")
@@ -1235,9 +1324,29 @@ def mostrar_analise(dados, atividades, diagnostico):
             st.dataframe(diagnostico, use_container_width=True, hide_index=True)
         return
 
+    medicos_ativos = medicos_com_lancamento(dados)
+
     c1, c2 = st.columns(2)
-    c1.metric("👨‍⚕️ Profissionais únicos (CRM)", contar_profissionais_unicos(dados))
-    c2.metric("📄 Lançamentos encontrados", len(dados))
+    c1.metric(
+        "👨‍⚕️ Médicos com lançamento",
+        len(medicos_ativos),
+    )
+    c2.metric(
+        "📄 Linhas com lançamento",
+        len(dados),
+    )
+
+    st.subheader("👨‍⚕️ Médicos que realmente tiveram lançamento")
+    if medicos_ativos.empty:
+        st.warning("Nenhum médico com produção/valor lançado foi identificado.")
+    else:
+        st.dataframe(
+            medicos_ativos[
+                ["Profissional", "CRM", "Quantidade de linhas"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.subheader("📊 Produção encontrada")
     plantoes = dados["Plantoes"].sum()
@@ -1353,7 +1462,16 @@ def resumo_faturamento(dados, atividades):
 
     profissionais = 0
     if dados is not None and not dados.empty and "CRM_ID" in dados.columns:
-        profissionais = int(dados["CRM_ID"].astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        ativos = medicos_com_lancamento(dados)
+        if not ativos.empty:
+            profissionais = int(
+                ativos["CRM_ID"]
+                .astype(str)
+                .str.strip()
+                .replace("", pd.NA)
+                .dropna()
+                .nunique()
+            )
 
     return {
         "Valor total": calcular_valor_total_faturamento(atividades, dados),
