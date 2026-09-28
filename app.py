@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "2.8"
+VERSAO = "3.0"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -1948,6 +1948,28 @@ elif pagina == "💰 Faturamento":
                 competencia = combinado["competencia"]
                 responsavel = usuario_logado_nome()
 
+                # Mantém cada relatório separado também no envio ao Apps Script.
+                # Assim, se forem selecionados vários relatórios de uma vez,
+                # a célula pode ficar, por exemplo: =120000+10000+2000
+                parcelas_relatorios = []
+
+                for relatorio_item in combinado["selecionados"]:
+                    resumo_item = resumo_faturamento(
+                        relatorio_item["dados"],
+                        relatorio_item["atividades"],
+                    )
+
+                    parcelas_relatorios.append({
+                        "arquivo": relatorio_item.get("arquivo", ""),
+                        "valor_total": resumo_item["Valor total"],
+                        "plantoes": resumo_item["Plantoes"],
+                        "consultas": resumo_item["Consultas faturamento"],
+                        "horas": resumo_item["Horas"],
+                        "quant_mes": resumo_item["Meses"],
+                        "pacotes": resumo_item["Pacotes"],
+                        "quant_dia": resumo_item["Dias"],
+                    })
+
                 chave_selecao = "|".join(sorted(ids_selecionados))
                 if st.session_state.get("_chave_selecao_faturamento") != chave_selecao:
                     st.session_state["_chave_selecao_faturamento"] = chave_selecao
@@ -1977,7 +1999,8 @@ elif pagina == "💰 Faturamento":
 
                 st.caption(
                     "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
-                    "Os profissionais são deduplicados por CRM entre os relatórios selecionados."
+                    "Os profissionais são deduplicados por CRM entre os relatórios selecionados. "
+                    "Quando houver mais de um relatório, cada parcela é preservada separadamente na fórmula da planilha."
                 )
 
                 try:
@@ -2013,6 +2036,7 @@ elif pagina == "💰 Faturamento":
                             "quant_dia": resumo["Dias"],
                             "profissionais": resumo["Profissionais"],
                             "somar_existente": somar_existente,
+                            "parcelas_relatorios": parcelas_relatorios,
                         }
                         resposta = requests.post(
                             apps_script_url,
