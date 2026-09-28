@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.2"
+VERSAO = "3.3"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -2537,7 +2537,7 @@ elif pagina == "💰 Faturamento":
 elif pagina == "👨‍⚕️ Pesquisa de médicos":
     st.title("👨‍⚕️ Pesquisa de médicos")
     st.write(
-        "Pesquise pelo **nome do médico** ou pelo **CRM** para consultar "
+        "Pesquise pelo **nome do médico**, **CRM** ou **município/ente** para consultar "
         "os lançamentos que já foram faturados pelo sistema."
     )
     st.caption(
@@ -2560,13 +2560,13 @@ elif pagina == "👨‍⚕️ Pesquisa de médicos":
         )
     else:
         termo_medico = st.text_input(
-            "Nome do médico ou CRM",
-            placeholder="Ex.: João da Silva ou 12345",
+            "Nome do médico, CRM ou município/ente",
+            placeholder="Ex.: João da Silva, 12345 ou Ubá",
             key="termo_pesquisa_medico",
         )
 
         if st.button(
-            "🔎 Pesquisar médico",
+            "🔎 Pesquisar",
             type="primary",
             use_container_width=True,
         ):
@@ -2574,7 +2574,7 @@ elif pagina == "👨‍⚕️ Pesquisa de médicos":
 
             if len(termo) < 2:
                 st.warning(
-                    "Digite pelo menos 2 caracteres do nome ou CRM."
+                    "Digite pelo menos 2 caracteres do nome, CRM ou município/ente."
                 )
             else:
                 try:
@@ -2603,7 +2603,7 @@ elif pagina == "👨‍⚕️ Pesquisa de médicos":
                         raise RuntimeError(
                             retorno.get(
                                 "mensagem",
-                                "Não foi possível pesquisar o médico.",
+                                "Não foi possível realizar a pesquisa.",
                             )
                         )
 
@@ -2619,7 +2619,7 @@ elif pagina == "👨‍⚕️ Pesquisa de médicos":
 
                 except Exception as erro:
                     st.error(
-                        "Não consegui consultar o histórico médico."
+                        "Não consegui consultar o histórico médico / municipal."
                     )
                     with st.expander(
                         "Ver detalhes do erro"
