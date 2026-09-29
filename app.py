@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.5"
+VERSAO = "3.6"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -313,6 +313,136 @@ def unidade_por_campo(campo):
     }.get(campo, "")
 
 
+def valor_parece_numerico(valor):
+    """
+    Identifica números reais da planilha sem confundir textos de data/turno
+    como '12/09/2026 - Diurno' com quantidade.
+    """
+    if valor is None:
+        return False
+
+    if isinstance(valor, bool):
+        return False
+
+    if isinstance(valor, (int, float)):
+        try:
+            return not pd.isna(valor)
+        except Exception:
+            return True
+
+    texto = str(valor).strip()
+
+    if not texto:
+        return False
+
+    texto = (
+        texto
+        .replace("R$", "")
+        .replace(" ", "")
+    )
+
+    # Aceita números no padrão brasileiro e internacional, mas somente
+    # quando a célula inteira representa um número.
+    return bool(
+        re.fullmatch(
+            r"-?\d+(?:[.,]\d+)?",
+            texto,
+        )
+    )
+
+
+def pontuar_coluna_quantidade(
+    planilha,
+    linha_cabecalho,
+    coluna,
+):
+    """
+    Conta quantos valores numéricos aparecem logo abaixo do cabeçalho.
+    Para ao encontrar uma linha de SOMA, evitando invadir o bloco seguinte.
+    """
+    if coluna < 0 or coluna >= planilha.shape[1]:
+        return -1
+
+    inicio = linha_cabecalho + 1
+    fim = min(
+        len(planilha),
+        linha_cabecalho + 18,
+    )
+
+    pontos = 0
+
+    for linha in range(inicio, fim):
+        textos_linha = [
+            normalizar_texto(v)
+            for v in planilha.iloc[linha].tolist()
+        ]
+
+        if any(
+            t.startswith("soma")
+            for t in textos_linha
+            if t
+        ):
+            break
+
+        valor = planilha.iat[
+            linha,
+            coluna,
+        ]
+
+        if valor_parece_numerico(valor):
+            pontos += 1
+
+    return pontos
+
+
+def ajustar_coluna_quantidade(
+    planilha,
+    linha_cabecalho,
+    coluna_detectada,
+):
+    """
+    Corrige relatórios com células mescladas no cabeçalho.
+
+    Exemplo real:
+      C = 'QUANT. DE HORA' no cabeçalho
+      C = '12/09/2026 - Diurno' nos dados
+      D = 24,00 nos dados
+
+    Nesse caso a quantidade verdadeira está em D, embora o título tenha
+    ficado armazenado em C pelo Excel.
+    """
+    candidatos = [
+        coluna_detectada,
+    ]
+
+    if coluna_detectada + 1 < planilha.shape[1]:
+        candidatos.append(
+            coluna_detectada + 1
+        )
+
+    pontuacoes = {
+        coluna: pontuar_coluna_quantidade(
+            planilha,
+            linha_cabecalho,
+            coluna,
+        )
+        for coluna in candidatos
+    }
+
+    # Em empate, preserva a coluna originalmente detectada.
+    melhor = max(
+        candidatos,
+        key=lambda coluna: (
+            pontuacoes[coluna],
+            -abs(
+                coluna - coluna_detectada
+            ),
+        ),
+    )
+
+    return melhor
+
+
 def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
     resultado = {k: [] for k in [
         "Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas",
@@ -339,8 +469,43 @@ def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
             if t in ["valor total final", "valor final", "valor liquido"]: resultado["Valor final"].append(coluna)
             elif t in ["valor total", "valor bruto", "total bruto"]: resultado["Valor bruto"].append(coluna)
 
+    # Em alguns relatórios FHEMIG, o título da quantidade fica em uma
+    # célula mesclada à esquerda da coluna onde estão os números.
+    # Ajustamos apenas as colunas de produção; valores financeiros mantêm
+    # a posição original.
+    campos_quantidade = [
+        "Plantoes",
+        "Consultas",
+        "Procedimentos",
+        "Exames",
+        "Interconsultas",
+        "Pacotes",
+        "Horas",
+        "Meses",
+        "Dias",
+    ]
+
+    for campo in campos_quantidade:
+        corrigidas = []
+
+        for coluna in resultado[campo]:
+            corrigidas.append(
+                ajustar_coluna_quantidade(
+                    planilha,
+                    linha_cabecalho,
+                    coluna,
+                )
+            )
+
+        resultado[campo] = corrigidas
+
     for campo in resultado:
-        resultado[campo] = list(dict.fromkeys(resultado[campo]))
+        resultado[campo] = list(
+            dict.fromkeys(
+                resultado[campo]
+            )
+        )
+
     return resultado
 
 # ============================================================
