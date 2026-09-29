@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.3"
+VERSAO = "3.4"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -1487,8 +1487,11 @@ def montar_historico_medicos(dados, atividades):
             errors="coerce",
         ).fillna(0)
 
-    # Agrupa descrições/códigos de atividades na mesma linha do relatório.
+    # Agrupa descrições/códigos e calcula o valor real por linha.
+    # Em vários modelos "largos", o relatório não possui uma coluna simples
+    # de VALOR TOTAL por médico. Nesses casos, o valor é QUANTIDADE x VALOR UNITÁRIO.
     detalhes_por_linha = {}
+    valores_por_linha = {}
 
     if atividades is not None and not atividades.empty:
         atividades_base = atividades.copy()
@@ -1507,6 +1510,25 @@ def montar_historico_medicos(dados, atividades):
             quantidade = converter_numero(
                 atividade.get("Quantidade", 0)
             )
+            valor_unitario_atividade = converter_numero(
+                atividade.get("Valor unitario", 0)
+            )
+            valor_bruto_atividade = converter_numero(
+                atividade.get("Valor bruto", 0)
+            )
+
+            if abs(valor_bruto_atividade) > 0:
+                valor_atividade = valor_bruto_atividade
+            elif abs(quantidade) > 0 and abs(valor_unitario_atividade) > 0:
+                valor_atividade = quantidade * valor_unitario_atividade
+            else:
+                valor_atividade = 0.0
+
+            if abs(valor_atividade) > 0:
+                valores_por_linha[chave] = (
+                    valores_por_linha.get(chave, 0.0)
+                    + valor_atividade
+                )
 
             partes = []
 
@@ -1555,6 +1577,18 @@ def montar_historico_medicos(dados, atividades):
                 )
             )
         )
+
+        valor_bruto_linha = converter_numero(
+            linha.get("Valor bruto", 0)
+        )
+
+        # Se o relatório tiver um VALOR TOTAL explícito, preserva esse valor.
+        # Caso contrário, usa a soma das atividades da linha.
+        if abs(valor_bruto_linha) <= 0:
+            valor_bruto_linha = valores_por_linha.get(
+                chave,
+                0.0,
+            )
 
         historico.append({
             "profissional": str(
@@ -1619,10 +1653,9 @@ def montar_historico_medicos(dados, atividades):
                     linha.get("Dias", 0)
                 )
             ),
-            "valor_bruto": float(
-                converter_numero(
-                    linha.get("Valor bruto", 0)
-                )
+            "valor_bruto": round(
+                float(valor_bruto_linha),
+                2,
             ),
             "valor_final": float(
                 converter_numero(
