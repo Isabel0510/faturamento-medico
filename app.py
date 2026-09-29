@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.6"
+VERSAO = "3.8"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -399,18 +399,44 @@ def ajustar_coluna_quantidade(
     planilha,
     linha_cabecalho,
     coluna_detectada,
+    colunas_valor_unitario=None,
 ):
     """
-    Corrige relatórios com células mescladas no cabeçalho.
+    Corrige relatórios com cabeçalhos deslocados/mesclados.
 
-    Exemplo real:
-      C = 'QUANT. DE HORA' no cabeçalho
-      C = '12/09/2026 - Diurno' nos dados
-      D = 24,00 nos dados
+    Regra principal:
+    - quando existe uma coluna de VALOR UNITÁRIO logo à direita,
+      a quantidade fica imediatamente à esquerda dela.
 
-    Nesse caso a quantidade verdadeira está em D, embora o título tenha
-    ficado armazenado em C pelo Excel.
+    Isso evita confundir o próprio VALOR UNITÁRIO com a quantidade.
     """
+    colunas_valor_unitario = (
+        colunas_valor_unitario
+        or []
+    )
+
+    # Prioridade: estrutura QUANTIDADE | VALOR UNITÁRIO.
+    candidatos_valor = [
+        coluna
+        for coluna in colunas_valor_unitario
+        if (
+            coluna > coluna_detectada
+            and coluna - coluna_detectada <= 3
+        )
+    ]
+
+    if candidatos_valor:
+        coluna_valor = min(
+            candidatos_valor
+        )
+        coluna_quantidade = (
+            coluna_valor - 1
+        )
+
+        if coluna_quantidade >= 0:
+            return coluna_quantidade
+
+    # Fallback para relatórios sem valor unitário identificado.
     candidatos = [
         coluna_detectada,
     ]
@@ -429,7 +455,6 @@ def ajustar_coluna_quantidade(
         for coluna in candidatos
     }
 
-    # Em empate, preserva a coluna originalmente detectada.
     melhor = max(
         candidatos,
         key=lambda coluna: (
@@ -464,8 +489,36 @@ def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
             if "quant de exame" in t or "quant exame" in t or "qtd exame" in t or t == "exames": resultado["Exames"].append(coluna)
             if "quant de mes" in t or "quant mes" in t or "qtd mes" in t or t == "meses": resultado["Meses"].append(coluna)
             if "quant de dia" in t or "quant dia" in t or "qtd dia" in t or t == "dias": resultado["Dias"].append(coluna)
-            if any(x in t for x in ["valor da hora", "valor do plantao", "valor da consulta", "valor consulta", "valor do procedimento", "valor procedimento", "valor do exame", "valor da interconsulta", "valor do pacote"]) or t in ["valor unit", "valor unitario"]:
-                resultado["Valor unitario"].append(coluna)
+            if (
+                any(
+                    x in t
+                    for x in [
+                        "valor da hora",
+                        "valor de hora",
+                        "valor do plantao",
+                        "valor de plantao",
+                        "valor da consulta",
+                        "valor de consulta",
+                        "valor consulta",
+                        "valor do procedimento",
+                        "valor de procedimento",
+                        "valor procedimento",
+                        "valor do exame",
+                        "valor de exame",
+                        "valor da interconsulta",
+                        "valor de interconsulta",
+                        "valor do pacote",
+                        "valor de pacote",
+                    ]
+                )
+                or t in [
+                    "valor unit",
+                    "valor unitario",
+                ]
+            ):
+                resultado["Valor unitario"].append(
+                    coluna
+                )
             if t in ["valor total final", "valor final", "valor liquido"]: resultado["Valor final"].append(coluna)
             elif t in ["valor total", "valor bruto", "total bruto"]: resultado["Valor bruto"].append(coluna)
 
@@ -494,6 +547,7 @@ def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
                     planilha,
                     linha_cabecalho,
                     coluna,
+                    resultado["Valor unitario"],
                 )
             )
 
@@ -1421,10 +1475,31 @@ def localizar_crms_com_varios_lancamentos(dados):
 
 
 def medicos_com_lancamento(dados):
-    """Retorna somente médicos/CRMs que possuem ao menos um lançamento real."""
+    """
+    Retorna apenas médicos com lançamento real e soma toda a produção
+    do mesmo CRM, mesmo quando o profissional aparece em mais de um bloco.
+    """
+    colunas_saida = [
+        "Profissional",
+        "CRM",
+        "CRM_ID",
+        "Quantidade de linhas",
+        "Plantoes",
+        "Consultas",
+        "Procedimentos",
+        "Exames",
+        "Interconsultas",
+        "Pacotes",
+        "Horas",
+        "Meses",
+        "Dias",
+        "Valor bruto",
+        "Valor final",
+    ]
+
     if dados is None or dados.empty:
         return pd.DataFrame(
-            columns=["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+            columns=colunas_saida
         )
 
     base = dados.copy()
@@ -1446,6 +1521,7 @@ def medicos_com_lancamento(dados):
     for coluna in colunas_producao:
         if coluna not in base.columns:
             base[coluna] = 0
+
         base[coluna] = pd.to_numeric(
             base[coluna],
             errors="coerce",
@@ -1458,31 +1534,57 @@ def medicos_com_lancamento(dados):
         > 0
     )
 
-    base = base[mascara].copy()
+    base = base[
+        mascara
+    ].copy()
 
     if base.empty:
         return pd.DataFrame(
-            columns=["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+            columns=colunas_saida
+        )
+
+    agregacoes = {
+        "Profissional": (
+            "Profissional",
+            "first",
+        ),
+        "Quantidade de linhas": (
+            "Profissional",
+            "size",
+        ),
+    }
+
+    for coluna in colunas_producao:
+        agregacoes[coluna] = (
+            coluna,
+            "sum",
         )
 
     resultado = (
         base.groupby(
-            ["CRM_ID", "CRM"],
+            [
+                "CRM_ID",
+                "CRM",
+            ],
             dropna=False,
             as_index=False,
         )
         .agg(
-            Profissional=("Profissional", "first"),
-            **{"Quantidade de linhas": ("Profissional", "size")},
+            **agregacoes
         )
     )
 
     return resultado[
-        ["Profissional", "CRM", "CRM_ID", "Quantidade de linhas"]
+        colunas_saida
     ].sort_values(
-        ["Profissional", "CRM"],
+        [
+            "Profissional",
+            "CRM",
+        ],
         kind="stable",
-    ).reset_index(drop=True)
+    ).reset_index(
+        drop=True
+    )
 
 
 def mostrar_analise(dados, atividades, diagnostico):
@@ -1508,10 +1610,73 @@ def mostrar_analise(dados, atividades, diagnostico):
     if medicos_ativos.empty:
         st.warning("Nenhum médico com produção/valor lançado foi identificado.")
     else:
-        st.dataframe(
+        colunas_medicos = [
+            "Profissional",
+            "CRM",
+        ]
+
+        colunas_quantitativas = [
+            "Plantoes",
+            "Consultas",
+            "Procedimentos",
+            "Exames",
+            "Interconsultas",
+            "Pacotes",
+            "Horas",
+            "Meses",
+            "Dias",
+        ]
+
+        # Mostra apenas os tipos de produção que realmente aparecem
+        # no relatório, evitando uma tabela cheia de zeros.
+        for coluna in colunas_quantitativas:
+            if (
+                coluna in medicos_ativos.columns
+                and pd.to_numeric(
+                    medicos_ativos[coluna],
+                    errors="coerce",
+                ).fillna(0).abs().sum() > 0
+            ):
+                colunas_medicos.append(
+                    coluna
+                )
+
+        if (
+            "Valor bruto"
+            in medicos_ativos.columns
+            and pd.to_numeric(
+                medicos_ativos["Valor bruto"],
+                errors="coerce",
+            ).fillna(0).abs().sum() > 0
+        ):
+            colunas_medicos.append(
+                "Valor bruto"
+            )
+
+        colunas_medicos.append(
+            "Quantidade de linhas"
+        )
+
+        tabela_medicos = (
             medicos_ativos[
-                ["Profissional", "CRM", "Quantidade de linhas"]
-            ],
+                colunas_medicos
+            ].copy()
+        )
+
+        renomear_medicos = {
+            "Plantoes": "Plantões",
+            "Meses": "Quant. mês",
+            "Dias": "Quant. dia",
+            "Valor bruto": "Valor bruto",
+            "Quantidade de linhas": "Lançamentos",
+        }
+
+        tabela_medicos = tabela_medicos.rename(
+            columns=renomear_medicos
+        )
+
+        st.dataframe(
+            tabela_medicos,
             use_container_width=True,
             hide_index=True,
         )
