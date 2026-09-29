@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.4"
+VERSAO = "3.5"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -1427,32 +1427,80 @@ def somar_coluna_segura(dados, coluna):
     return float(pd.to_numeric(dados[coluna], errors="coerce").fillna(0).sum())
 
 
-def calcular_valor_total_faturamento(atividades, dados):
+def calcular_detalhes_valor_total_faturamento(atividades, dados):
     """
-    Calcula o valor bruto a lançar na coluna 'Valor total'.
+    Calcula o valor que deve ir para o faturamento e mantém as duas fontes
+    para conferência.
 
-    Prioridade por atividade:
-    1) Valor bruto existente no relatório;
-    2) Quantidade x valor unitário.
+    Regra:
+    1) Se o relatório trouxe VALOR BRUTO/TOTAL por linha, esse valor é oficial
+       para o lançamento.
+    2) Somente quando o relatório não trouxe valor bruto utilizamos
+       QUANTIDADE x VALOR UNITÁRIO das atividades.
     """
-    total = 0.0
+    valor_bruto_relatorio = round(
+        somar_coluna_segura(
+            dados,
+            "Valor bruto",
+        ),
+        2,
+    )
+
+    valor_calculado_atividades = 0.0
 
     if atividades is not None and not atividades.empty:
         for _, linha in atividades.iterrows():
-            valor_bruto = converter_numero(linha.get("Valor bruto", 0))
-            quantidade = converter_numero(linha.get("Quantidade", 0))
-            valor_unitario = converter_numero(linha.get("Valor unitario", 0))
+            valor_bruto = converter_numero(
+                linha.get(
+                    "Valor bruto",
+                    0,
+                )
+            )
+            quantidade = converter_numero(
+                linha.get(
+                    "Quantidade",
+                    0,
+                )
+            )
+            valor_unitario = converter_numero(
+                linha.get(
+                    "Valor unitario",
+                    0,
+                )
+            )
 
             if valor_bruto > 0:
-                total += valor_bruto
+                valor_calculado_atividades += valor_bruto
             elif quantidade > 0 and valor_unitario > 0:
-                total += quantidade * valor_unitario
+                valor_calculado_atividades += (
+                    quantidade * valor_unitario
+                )
 
-    if total > 0:
-        return round(total, 2)
+    valor_calculado_atividades = round(
+        valor_calculado_atividades,
+        2,
+    )
 
-    # Fallback para modelos em que só conseguimos o valor bruto por linha.
-    return round(somar_coluna_segura(dados, "Valor bruto"), 2)
+    if valor_bruto_relatorio > 0:
+        valor_total = valor_bruto_relatorio
+        fonte = "Valor bruto informado no relatório"
+    else:
+        valor_total = valor_calculado_atividades
+        fonte = "Quantidade x valor unitário"
+
+    return {
+        "valor_total": round(valor_total, 2),
+        "valor_bruto_relatorio": valor_bruto_relatorio,
+        "valor_calculado_atividades": valor_calculado_atividades,
+        "fonte": fonte,
+    }
+
+
+def calcular_valor_total_faturamento(atividades, dados):
+    return calcular_detalhes_valor_total_faturamento(
+        atividades,
+        dados,
+    )["valor_total"]
 
 
 def montar_historico_medicos(dados, atividades):
@@ -1691,8 +1739,16 @@ def resumo_faturamento(dados, atividades):
                 .nunique()
             )
 
+    detalhes_valor = calcular_detalhes_valor_total_faturamento(
+        atividades,
+        dados,
+    )
+
     return {
-        "Valor total": calcular_valor_total_faturamento(atividades, dados),
+        "Valor total": detalhes_valor["valor_total"],
+        "Valor bruto relatório": detalhes_valor["valor_bruto_relatorio"],
+        "Valor calculado atividades": detalhes_valor["valor_calculado_atividades"],
+        "Fonte valor total": detalhes_valor["fonte"],
         "Plantoes": somar_coluna_segura(dados, "Plantoes"),
         "Consultas faturamento": consultas_faturamento,
         "Horas": somar_coluna_segura(dados, "Horas"),
@@ -2338,7 +2394,33 @@ elif pagina == "💰 Faturamento":
                 c7.metric("Quant. dia", formatar_numero(resumo["Dias"], 2))
                 c8.metric("Profissionais únicos", resumo["Profissionais"])
 
+                valor_bruto_relatorio = resumo.get(
+                    "Valor bruto relatório",
+                    0,
+                )
+                valor_calculado_atividades = resumo.get(
+                    "Valor calculado atividades",
+                    0,
+                )
+
+                if (
+                    valor_bruto_relatorio > 0
+                    and valor_calculado_atividades > 0
+                    and abs(
+                        valor_bruto_relatorio
+                        - valor_calculado_atividades
+                    ) > 0.01
+                ):
+                    st.warning(
+                        "⚠️ Foram encontrados dois valores diferentes: "
+                        f"o relatório informa {formatar_moeda(valor_bruto_relatorio)}, "
+                        f"enquanto a soma das atividades identificadas resulta em "
+                        f"{formatar_moeda(valor_calculado_atividades)}. "
+                        "Para o faturamento será usado o VALOR BRUTO informado no relatório."
+                    )
+
                 st.caption(
+                    f"Fonte do valor total: {resumo.get('Fonte valor total', '—')}. "
                     "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
                     "Os profissionais são deduplicados por CRM entre os relatórios selecionados. "
                     "Quando houver mais de um relatório, cada parcela é preservada separadamente na fórmula da planilha."
