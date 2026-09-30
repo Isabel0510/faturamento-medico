@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.13"
-PARSER_VERSION = "3.14-abas-por-mes-quantitativos"
+VERSAO = "3.15"
+PARSER_VERSION = "3.15-excel-ods"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -640,6 +640,52 @@ def extrair_atividades_largas(planilha, numero_linha, linha_cabecalho, colunas_p
 # ============================================================
 # LEITURA DO RELATÓRIO
 # ============================================================
+def engine_planilha_por_nome(nome_arquivo):
+    """Retorna o engine do pandas conforme o formato do relatório."""
+    extensao = str(nome_arquivo or "").strip().lower().rsplit(".", 1)[-1]
+
+    if extensao in {"xlsx", "xlsm"}:
+        return "openpyxl"
+    if extensao == "ods":
+        return "odf"
+
+    raise ValueError(
+        "Formato não suportado. Envie um arquivo Excel (.xlsx/.xlsm) ou ODS (.ods)."
+    )
+
+
+def abrir_planilha_pandas(arquivo_bytes, nome_arquivo, sheet_name=None, header=None, dtype=object):
+    """Abre Excel ou ODS a partir dos bytes do upload."""
+    engine = engine_planilha_por_nome(nome_arquivo)
+    try:
+        return pd.read_excel(
+            io.BytesIO(arquivo_bytes),
+            sheet_name=sheet_name,
+            header=header,
+            dtype=dtype,
+            engine=engine,
+        )
+    except ImportError as erro:
+        if engine == "odf":
+            raise RuntimeError(
+                "Para abrir arquivos ODS, adicione 'odfpy' ao requirements.txt do aplicativo."
+            ) from erro
+        raise
+
+
+def listar_abas_planilha(arquivo_bytes, nome_arquivo):
+    """Lista abas de arquivos Excel ou ODS."""
+    engine = engine_planilha_por_nome(nome_arquivo)
+    try:
+        excel = pd.ExcelFile(io.BytesIO(arquivo_bytes), engine=engine)
+        return excel.sheet_names
+    except ImportError as erro:
+        if engine == "odf":
+            raise RuntimeError(
+                "Para abrir arquivos ODS, adicione 'odfpy' ao requirements.txt do aplicativo."
+            ) from erro
+        raise
+
 def linha_tem_producao_larga(planilha, numero_linha, colunas_prod):
     """Retorna True quando a linha possui algum quantitativo real de produção."""
     for campo in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]:
@@ -685,7 +731,7 @@ def localizar_linha_producao_associada(planilha, numero_linha, coluna_profission
 
 
 def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
-    planilha = pd.read_excel(io.BytesIO(arquivo_bytes), sheet_name=nome_aba, header=None, dtype=object)
+    planilha = abrir_planilha_pandas(arquivo_bytes, nome_arquivo, sheet_name=nome_aba, header=None, dtype=object)
 
     if planilha.empty:
         return pd.DataFrame(), pd.DataFrame(), {
@@ -909,9 +955,9 @@ def processar_relatorio(arquivo_bytes, nome_arquivo, abas):
 
 
 @st.cache_data(show_spinner=False, max_entries=40)
-def listar_abas_excel_cache(arquivo_bytes):
-    excel = pd.ExcelFile(io.BytesIO(arquivo_bytes))
-    return excel.sheet_names
+def listar_abas_planilha_cache(arquivo_bytes, nome_arquivo, parser_version=PARSER_VERSION):
+    # O nome do arquivo entra na chave porque define se o engine é Excel ou ODS.
+    return listar_abas_planilha(arquivo_bytes, nome_arquivo)
 
 
 @st.cache_data(show_spinner=False, max_entries=40)
@@ -2514,8 +2560,8 @@ elif pagina == "📤 Novo relatório":
     )
 
     arquivos = st.file_uploader(
-        "📎 Selecione um ou vários relatórios Excel",
-        type=["xlsx"],
+        "📎 Selecione um ou vários relatórios Excel ou ODS",
+        type=["xlsx", "xlsm", "ods"],
         accept_multiple_files=True,
         key="arquivos_relatorios_separados",
     )
@@ -2528,7 +2574,7 @@ elif pagina == "📤 Novo relatório":
         for indice, arquivo in enumerate(arquivos):
             try:
                 arquivo_bytes = arquivo.getvalue()
-                abas = listar_abas_excel_cache(arquivo_bytes)
+                abas = listar_abas_planilha_cache(arquivo_bytes, arquivo.name)
 
                 if len(abas) == 1:
                     escolhidas = abas
