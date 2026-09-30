@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.11"
+VERSAO = "3.12"
 PARSER_VERSION = "3.11-quantitativos-estavel"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
@@ -640,6 +640,50 @@ def extrair_atividades_largas(planilha, numero_linha, linha_cabecalho, colunas_p
 # ============================================================
 # LEITURA DO RELATÓRIO
 # ============================================================
+def linha_tem_producao_larga(planilha, numero_linha, colunas_prod):
+    """Retorna True quando a linha possui algum quantitativo real de produção."""
+    for campo in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]:
+        for coluna in colunas_prod.get(campo, []):
+            if abs(converter_numero(planilha.iat[numero_linha, coluna])) > 0:
+                return True
+    return False
+
+
+def localizar_linha_producao_associada(planilha, numero_linha, coluna_profissional, colunas_prod):
+    """
+    Alguns relatórios lançam a produção na linha da CLÍNICA e deixam o nome/CRM
+    do médico na linha imediatamente abaixo. Nesses casos, associa os quantitativos
+    da clínica ao profissional sem transformar a clínica em um profissional.
+    """
+    if linha_tem_producao_larga(planilha, numero_linha, colunas_prod):
+        return numero_linha
+
+    for deslocamento in (1, 2):
+        candidata = numero_linha - deslocamento
+        if candidata < 0:
+            break
+
+        nome_candidato = normalizar_texto(planilha.iat[candidata, coluna_profissional])
+        if not nome_candidato:
+            continue
+
+        eh_linha_clinica = (
+            nome_candidato.startswith("clinica")
+            or nome_candidato.startswith("empresa")
+            or nome_candidato.startswith("prestador")
+        )
+
+        if eh_linha_clinica and linha_tem_producao_larga(planilha, candidata, colunas_prod):
+            return candidata
+
+        # Se encontramos outra linha textual antes de uma clínica, não atravessamos
+        # blocos para evitar associar produção ao profissional errado.
+        if deslocamento == 1 and not eh_linha_clinica:
+            break
+
+    return numero_linha
+
+
 def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
     planilha = pd.read_excel(io.BytesIO(arquivo_bytes), sheet_name=nome_aba, header=None, dtype=object)
 
@@ -674,31 +718,39 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
 
             producao = {k: 0.0 for k in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]}
 
-            # Modelo largo: mantém os totais que já estavam funcionando.
+            # Alguns municípios lançam a quantidade/valor na linha da CLÍNICA
+            # e informam o médico + CRM logo abaixo. Para esses relatórios,
+            # usamos a linha da clínica como origem dos números, mas mantemos
+            # o profissional da linha atual como responsável pelo lançamento.
+            linha_producao = localizar_linha_producao_associada(
+                planilha, numero_linha, coluna_profissional, colunas_prod
+            )
+
+            # Modelo largo: soma os quantitativos na linha efetiva de produção.
             for campo in producao:
                 for coluna in colunas_prod[campo]:
-                    producao[campo] += converter_numero(planilha.iat[numero_linha, coluna])
+                    producao[campo] += converter_numero(planilha.iat[linha_producao, coluna])
 
             # Modelo largo: cria atividades apenas quando existe quantidade lançada.
             atividades_linha = extrair_atividades_largas(
-                planilha, numero_linha, linha_cabecalho, colunas_prod,
+                planilha, linha_producao, linha_cabecalho, colunas_prod,
                 nome, crm, nome_arquivo, nome_aba
             )
             atividades.extend(atividades_linha)
 
             # Modelo genérico (UNIDADE DE MEDIDA + QUANT + CÓDIGO).
-            codigo = planilha.iat[numero_linha, colunas_gen["codigo"]] if colunas_gen["codigo"] is not None else ""
-            servico = planilha.iat[numero_linha, colunas_gen["servico"]] if colunas_gen["servico"] is not None else ""
-            unidade = planilha.iat[numero_linha, colunas_gen["unidade"]] if colunas_gen["unidade"] is not None else ""
-            quantidade = converter_numero(planilha.iat[numero_linha, colunas_gen["quantidade"]]) if colunas_gen["quantidade"] is not None else 0.0
+            codigo = planilha.iat[linha_producao, colunas_gen["codigo"]] if colunas_gen["codigo"] is not None else ""
+            servico = planilha.iat[linha_producao, colunas_gen["servico"]] if colunas_gen["servico"] is not None else ""
+            unidade = planilha.iat[linha_producao, colunas_gen["unidade"]] if colunas_gen["unidade"] is not None else ""
+            quantidade = converter_numero(planilha.iat[linha_producao, colunas_gen["quantidade"]]) if colunas_gen["quantidade"] is not None else 0.0
             categoria = classificar_unidade_medida(unidade)
 
             if categoria and quantidade != 0:
                 producao[categoria] += quantidade
 
-            valor_unitario = converter_numero(planilha.iat[numero_linha, colunas_gen["valor_unitario"]]) if colunas_gen["valor_unitario"] is not None else 0.0
-            valor_bruto = converter_numero(planilha.iat[numero_linha, colunas_gen["valor_bruto"]]) if colunas_gen["valor_bruto"] is not None else 0.0
-            valor_final = converter_numero(planilha.iat[numero_linha, colunas_gen["valor_final"]]) if colunas_gen["valor_final"] is not None else 0.0
+            valor_unitario = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_unitario"]]) if colunas_gen["valor_unitario"] is not None else 0.0
+            valor_bruto = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_bruto"]]) if colunas_gen["valor_bruto"] is not None else 0.0
+            valor_final = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_final"]]) if colunas_gen["valor_final"] is not None else 0.0
 
             codigo_n = "" if pd.isna(codigo) else normalizar_codigo(codigo)
             servico_n = "" if pd.isna(servico) else str(servico).strip()
