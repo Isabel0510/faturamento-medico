@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.10"
-PARSER_VERSION = "3.10-quantitativos-v2"
+VERSAO = "3.11"
+PARSER_VERSION = "3.11-quantitativos-estavel"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -797,9 +797,8 @@ def listar_abas_excel_cache(arquivo_bytes):
 
 
 @st.cache_data(show_spinner=False, max_entries=40)
-def processar_relatorio_cache(arquivo_bytes, nome_arquivo, abas, parser_version):
-    # parser_version faz parte da chave do cache para impedir reaproveitamento
-    # de quantitativos calculados por versões antigas do leitor.
+def processar_relatorio_cache(arquivo_bytes, nome_arquivo, abas, parser_version=PARSER_VERSION):
+    # parser_version entra na chave do cache e evita reutilizar leitura antiga.
     return processar_relatorio(
         arquivo_bytes,
         nome_arquivo,
@@ -860,37 +859,10 @@ def resumo_por_arquivo(dados, atividades):
 # ============================================================
 def id_relatorio_sessao(nome_arquivo, arquivo_bytes):
     assinatura = hashlib.sha1(arquivo_bytes).hexdigest()[:10]
-    return f"{nome_arquivo}::{assinatura}"
+    return f"{PARSER_VERSION}::{nome_arquivo}::{assinatura}"
 
 
 def relatorios_analisados_sessao():
-    """Mantém somente relatórios processados pelo parser atual."""
-    versao_salva = st.session_state.get("_parser_version")
-
-    if versao_salva != PARSER_VERSION:
-        chaves_relatorio = [
-            "relatorios_analisados",
-            "relatorio_ativo_id",
-            "dados_relatorio",
-            "atividades_relatorio",
-            "diagnostico_relatorio",
-            "municipio_relatorio",
-            "responsavel_relatorio",
-            "observacoes_relatorio",
-            "data_inicial_relatorio",
-            "data_final_relatorio",
-            "periodo_relatorio",
-            "competencia_faturamento",
-            "arquivo_relatorio_atual",
-            "previa_faturamento_drive",
-            "_chave_selecao_faturamento",
-        ]
-        for chave in chaves_relatorio:
-            st.session_state.pop(chave, None)
-
-        st.session_state["relatorios_analisados"] = {}
-        st.session_state["_parser_version"] = PARSER_VERSION
-
     return st.session_state.setdefault("relatorios_analisados", {})
 
 
