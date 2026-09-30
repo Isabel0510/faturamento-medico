@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
 VERSAO = "3.13"
-PARSER_VERSION = "3.13-clinicas-linha-anterior"
+PARSER_VERSION = "3.14-abas-por-mes-quantitativos"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -811,15 +811,81 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
 
 
 def sugerir_abas(nomes_abas, competencia_inicial, competencia_final):
+    """
+    Sugere as abas correspondentes à competência informada.
+
+    Os relatórios podem nomear as abas por número ("09") ou por mês em
+    português ("Set", "Setembro", "Ago-Esp", etc.). A versão anterior
+    procurava apenas o número do mês e, quando não encontrava, selecionava
+    a primeira aba do arquivo — por isso um relatório de setembro podia
+    acabar sendo lido como janeiro.
+    """
     if len(nomes_abas) == 1:
         return nomes_abas
-    meses = [competencia_inicial[:2], competencia_final[:2]]
-    candidatos = [aba for aba in nomes_abas if any(m in normalizar_texto(aba) for m in meses)]
+
+    mapa_meses = {
+        1: ("01", "jan", "janeiro"),
+        2: ("02", "fev", "fevereiro"),
+        3: ("03", "mar", "marco"),
+        4: ("04", "abr", "abril"),
+        5: ("05", "mai", "maio"),
+        6: ("06", "jun", "junho"),
+        7: ("07", "jul", "julho"),
+        8: ("08", "ago", "agosto"),
+        9: ("09", "set", "setembro"),
+        10: ("10", "out", "outubro"),
+        11: ("11", "nov", "novembro"),
+        12: ("12", "dez", "dezembro"),
+    }
+
+    meses_periodo = []
+    for competencia in [competencia_inicial, competencia_final]:
+        try:
+            mes = int(str(competencia).strip().split("/")[0])
+            if mes not in meses_periodo:
+                meses_periodo.append(mes)
+        except Exception:
+            pass
+
+    candidatos = []
+    for aba in nomes_abas:
+        aba_n = normalizar_texto(aba)
+        if aba_n == "modelo":
+            continue
+
+        palavras = set(aba_n.split())
+        encontrou = False
+
+        for mes in meses_periodo:
+            for token in mapa_meses.get(mes, ()):
+                token_n = normalizar_texto(token)
+
+                # Abreviações e nomes por extenso são comparados por palavra;
+                # números também aceitam nomes como "09-2026".
+                if token_n.isdigit():
+                    if re.search(rf"(^|\\D){re.escape(token_n)}(\\D|$)", aba_n):
+                        encontrou = True
+                        break
+                elif token_n in palavras:
+                    encontrou = True
+                    break
+
+            if encontrou:
+                break
+
+        if encontrou:
+            candidatos.append(aba)
+
     if candidatos:
-        return [candidatos[-1]]
+        return candidatos
+
+    # Fallback seguro: não escolhe silenciosamente Janeiro para outra
+    # competência. Mantém uma única sugestão apenas quando não há como
+    # identificar o mês pelo nome da aba.
     for aba in nomes_abas:
         if normalizar_texto(aba) != "modelo":
             return [aba]
+
     return [nomes_abas[0]]
 
 
@@ -2542,6 +2608,9 @@ elif pagina == "📤 Novo relatório":
                             "Plantões": resumo_item["Plantoes"],
                             "Consultas": resumo_item["Consultas faturamento"],
                             "Horas": resumo_item["Horas"],
+                            "Quant. mês": resumo_item["Meses"],
+                            "Pacotes": resumo_item["Pacotes"],
+                            "Quant. dia": resumo_item["Dias"],
                             "Profissionais": resumo_item["Profissionais"],
                         })
                     except Exception as erro:
@@ -2552,6 +2621,9 @@ elif pagina == "📤 Novo relatório":
                             "Plantões": 0,
                             "Consultas": 0,
                             "Horas": 0,
+                            "Quant. mês": 0,
+                            "Pacotes": 0,
+                            "Quant. dia": 0,
                             "Profissionais": 0,
                         })
                     barra.progress(posicao / len(configuracoes))
@@ -2588,6 +2660,9 @@ elif pagina == "📤 Novo relatório":
                 "Plantões": resumo_item["Plantoes"],
                 "Consultas": resumo_item["Consultas faturamento"],
                 "Horas": resumo_item["Horas"],
+                "Quant. mês": resumo_item["Meses"],
+                "Pacotes": resumo_item["Pacotes"],
+                "Quant. dia": resumo_item["Dias"],
                 "Profissionais": resumo_item["Profissionais"],
             })
         st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
