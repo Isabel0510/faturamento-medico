@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.8"
+VERSAO = "3.9"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -480,45 +480,44 @@ def localizar_colunas_producao_multilinha(planilha, linha_cabecalho):
         for t in textos:
             if not t:
                 continue
-            if "quant de hora" in t or "quantidade de hora" in t or "qtd hora" in t or t == "horas": resultado["Horas"].append(coluna)
-            if "quant de plantao" in t or "quant plantao" in t or "qtd plantao" in t or t == "plantoes": resultado["Plantoes"].append(coluna)
-            if "quant de interconsulta" in t or "quant interconsulta" in t or "qtd interconsulta" in t or t == "interconsultas": resultado["Interconsultas"].append(coluna)
-            if "quant de pacote" in t or "quant pacote" in t or "qtd pacote" in t or "pacote de consulta" in t or "pacote consultas" in t or t == "pacotes": resultado["Pacotes"].append(coluna)
-            if (("quant de consulta" in t or "quant consulta" in t or "qtd consulta" in t or t == "consultas") and "interconsulta" not in t and "pacote" not in t): resultado["Consultas"].append(coluna)
-            if "quant de procedimento" in t or "quant procedimento" in t or "qtd procedimento" in t or t == "procedimentos": resultado["Procedimentos"].append(coluna)
-            if "quant de exame" in t or "quant exame" in t or "qtd exame" in t or t == "exames": resultado["Exames"].append(coluna)
-            if "quant de mes" in t or "quant mes" in t or "qtd mes" in t or t == "meses": resultado["Meses"].append(coluna)
-            if "quant de dia" in t or "quant dia" in t or "qtd dia" in t or t == "dias": resultado["Dias"].append(coluna)
-            if (
-                any(
-                    x in t
-                    for x in [
-                        "valor da hora",
-                        "valor de hora",
-                        "valor do plantao",
-                        "valor de plantao",
-                        "valor da consulta",
-                        "valor de consulta",
-                        "valor consulta",
-                        "valor do procedimento",
-                        "valor de procedimento",
-                        "valor procedimento",
-                        "valor do exame",
-                        "valor de exame",
-                        "valor da interconsulta",
-                        "valor de interconsulta",
-                        "valor do pacote",
-                        "valor de pacote",
+            # Quantitativos: aceita variações como "QUANT. DE 5 HORAS",
+            # "QUANT. DE MÊS" e "QUANT. DE PLANTÃO".
+            tem_quant = ("quant" in t or "qtd" in t or "quantidade" in t)
+
+            if (tem_quant and "hora" in t) or t == "horas":
+                resultado["Horas"].append(coluna)
+            if (tem_quant and "plantao" in t) or t == "plantoes":
+                resultado["Plantoes"].append(coluna)
+            if (tem_quant and "interconsulta" in t) or t == "interconsultas":
+                resultado["Interconsultas"].append(coluna)
+            if (tem_quant and "pacote" in t) or "pacote de consulta" in t or "pacote consultas" in t or t == "pacotes":
+                resultado["Pacotes"].append(coluna)
+            if ((tem_quant and "consulta" in t) or t == "consultas") and "interconsulta" not in t and "pacote" not in t:
+                resultado["Consultas"].append(coluna)
+            if (tem_quant and "procedimento" in t) or t == "procedimentos":
+                resultado["Procedimentos"].append(coluna)
+            if (tem_quant and "exame" in t) or t == "exames":
+                resultado["Exames"].append(coluna)
+            if (tem_quant and re.search(r"\bmes(?:es)?\b", t)) or t == "meses":
+                resultado["Meses"].append(coluna)
+            if (tem_quant and re.search(r"\bdia(?:s)?\b", t)) or t == "dias":
+                resultado["Dias"].append(coluna)
+
+            # Valor unitário: não depende mais de frases exatas. Isso cobre
+            # "VALOR MÊS", "VALOR DE 5 HORAS" e "VALOR PLANTÃO" sem
+            # confundir com VALOR TOTAL/FINAL/BRUTO ou descontos.
+            eh_valor_unitario = (
+                t.startswith("valor")
+                and not any(
+                    termo in t
+                    for termo in [
+                        "total", "final", "bruto", "liquido", "desconto"
                     ]
                 )
-                or t in [
-                    "valor unit",
-                    "valor unitario",
-                ]
-            ):
-                resultado["Valor unitario"].append(
-                    coluna
-                )
+            )
+
+            if eh_valor_unitario:
+                resultado["Valor unitario"].append(coluna)
             if t in ["valor total final", "valor final", "valor liquido"]: resultado["Valor final"].append(coluna)
             elif t in ["valor total", "valor bruto", "total bruto"]: resultado["Valor bruto"].append(coluna)
 
