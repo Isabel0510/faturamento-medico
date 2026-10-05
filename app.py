@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.16"
-PARSER_VERSION = "3.16-excel-ods-sem-crm"
+VERSAO = "3.17"
+PARSER_VERSION = "3.17-excel-ods-sem-crm-seguro"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -260,7 +260,8 @@ def profissional_valido(nome, crm):
     invalidos = [
         "profissionais", "profissional", "nome completo", "soma", "total",
         "valor total", "relatorio", "servicos medicos", "municipio",
-        "competencia", "consolidado", "clinica", "empresa", "prestador"
+        "competencia", "consolidado", "clinica", "empresa", "prestador",
+        "desconto", "retencao", "imposto", "iss", "inss"
     ]
 
     if any(nome_n.startswith(normalizar_texto(x)) for x in invalidos):
@@ -790,8 +791,36 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
         for numero_linha in range(linha_cabecalho + 1, linha_final):
             nome = planilha.iat[numero_linha, coluna_profissional]
             crm = planilha.iat[numero_linha, coluna_crm]
+
             if not profissional_valido(nome, crm):
                 continue
+
+            # REGRA DE SEGURANÇA PARA CRM VAZIO:
+            # aceita o profissional sem CRM somente quando a própria linha
+            # (ou a linha de clínica associada) possui produção quantitativa real.
+            # Isso impede que rodapés como "DESCONTO 2%" ou retenções sejam
+            # interpretados como profissionais apenas porque possuem valor financeiro.
+            if not limpar_crm(crm):
+                linha_teste = localizar_linha_producao_associada(
+                    planilha, numero_linha, coluna_profissional, colunas_prod
+                )
+
+                tem_producao_sem_crm = linha_tem_producao_larga(
+                    planilha, linha_teste, colunas_prod
+                )
+
+                if not tem_producao_sem_crm:
+                    quantidade_generica_teste = (
+                        converter_numero(
+                            planilha.iat[linha_teste, colunas_gen["quantidade"]]
+                        )
+                        if colunas_gen["quantidade"] is not None
+                        else 0.0
+                    )
+                    tem_producao_sem_crm = abs(quantidade_generica_teste) > 0
+
+                if not tem_producao_sem_crm:
+                    continue
 
             producao = {k: 0.0 for k in ["Plantoes", "Consultas", "Procedimentos", "Exames", "Interconsultas", "Pacotes", "Horas", "Meses", "Dias"]}
 
