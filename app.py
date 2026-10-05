@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.18"
-PARSER_VERSION = "3.17-excel-ods-sem-crm-seguro"
+VERSAO = "3.19"
+PARSER_VERSION = "3.19-valores-monetarios-deslocados"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
