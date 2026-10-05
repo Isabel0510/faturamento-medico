@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.17"
+VERSAO = "3.18"
 PARSER_VERSION = "3.17-excel-ods-sem-crm-seguro"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
@@ -346,6 +346,66 @@ def unidade_por_campo(campo):
     }.get(campo, "")
 
 
+def ler_valor_monetario(planilha, numero_linha, coluna):
+    """
+    Lê valores monetários em relatórios onde o cabeçalho fica sobre uma
+    coluna com 'R$' e o número aparece na coluna imediatamente à direita.
+
+    Exemplo:
+        coluna K -> "R$"
+        coluna L -> 28.400,00
+
+    Mantém compatibilidade com relatórios em que o número já está na
+    própria coluna detectada.
+    """
+    if coluna is None:
+        return 0.0
+
+    if coluna < 0 or coluna >= planilha.shape[1]:
+        return 0.0
+
+    valor_original = planilha.iat[numero_linha, coluna]
+    convertido = converter_numero(valor_original)
+
+    if abs(convertido) > 0:
+        return convertido
+
+    texto_original = "" if pd.isna(valor_original) else str(valor_original).strip().upper()
+    pode_deslocar = (
+        not texto_original
+        or texto_original in {"R$", "R＄", "$", "RS"}
+    )
+
+    if not pode_deslocar:
+        return convertido
+
+    # Alguns relatórios separam "R$" e o número em células distintas.
+    # Procura somente nas duas colunas seguintes para não capturar
+    # valores de outro campo distante.
+    for deslocamento in (1, 2):
+        candidata = coluna + deslocamento
+        if candidata >= planilha.shape[1]:
+            break
+
+        valor_candidato = planilha.iat[numero_linha, candidata]
+
+        if valor_parece_numerico(valor_candidato):
+            numero = converter_numero(valor_candidato)
+            if abs(numero) > 0:
+                return numero
+
+        texto_candidato = "" if pd.isna(valor_candidato) else str(valor_candidato).strip().upper()
+
+        # Se houver outro marcador de moeda, continua procurando a próxima.
+        if texto_candidato in {"R$", "R＄", "$", "RS", ""}:
+            continue
+
+        # Encontrou outro conteúdo textual: não atravessa para outro campo.
+        break
+
+    return convertido
+
+
 def valor_parece_numerico(valor):
     """
     Identifica números reais da planilha sem confundir textos de data/turno
@@ -649,7 +709,9 @@ def extrair_atividades_largas(planilha, numero_linha, linha_cabecalho, colunas_p
 
             codigo, servico = localizar_titulo_atividade(planilha, linha_cabecalho, coluna_qtd)
             coluna_valor = encontrar_coluna_valor_associada(planilha, linha_cabecalho, coluna_qtd)
-            valor_unitario = converter_numero(planilha.iat[numero_linha, coluna_valor]) if coluna_valor is not None else 0.0
+            valor_unitario = ler_valor_monetario(
+                planilha, numero_linha, coluna_valor
+            )
 
             atividades.append({
                 "Profissional": str(nome).strip(),
@@ -854,9 +916,15 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
             if categoria and quantidade != 0:
                 producao[categoria] += quantidade
 
-            valor_unitario = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_unitario"]]) if colunas_gen["valor_unitario"] is not None else 0.0
-            valor_bruto = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_bruto"]]) if colunas_gen["valor_bruto"] is not None else 0.0
-            valor_final = converter_numero(planilha.iat[linha_producao, colunas_gen["valor_final"]]) if colunas_gen["valor_final"] is not None else 0.0
+            valor_unitario = ler_valor_monetario(
+                planilha, linha_producao, colunas_gen["valor_unitario"]
+            )
+            valor_bruto = ler_valor_monetario(
+                planilha, linha_producao, colunas_gen["valor_bruto"]
+            )
+            valor_final = ler_valor_monetario(
+                planilha, linha_producao, colunas_gen["valor_final"]
+            )
 
             codigo_n = "" if pd.isna(codigo) else normalizar_codigo(codigo)
             servico_n = "" if pd.isna(servico) else str(servico).strip()
