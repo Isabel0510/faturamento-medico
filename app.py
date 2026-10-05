@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.15"
-PARSER_VERSION = "3.15-excel-ods"
+VERSAO = "3.16"
+PARSER_VERSION = "3.16-excel-ods-sem-crm"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -232,18 +232,49 @@ def crm_valido(valor):
     return 4 <= len(chave_crm(valor)) <= 10
 
 
+def chave_profissional(nome, crm):
+    """
+    Identificador interno do profissional.
+
+    - Se houver CRM válido, usa somente os dígitos do CRM.
+    - Se o CRM estiver vazio, usa o nome normalizado como chave alternativa.
+      Assim profissionais sem CRM não são descartados nem agrupados todos
+      em uma única chave vazia.
+    """
+    crm_id = chave_crm(crm)
+    if crm_id:
+        return crm_id
+
+    nome_id = normalizar_texto(nome)
+    return f"SEMCRM::{nome_id}" if nome_id else ""
+
+
 def profissional_valido(nome, crm):
     nome_n = normalizar_texto(nome)
+
     if not nome_n or len(nome_n) < 4 or not re.search(r"[a-z]", nome_n):
         return False
+
+    # Evita que cabeçalhos, totais ou linhas de empresas/clínicas sejam
+    # interpretados como profissionais quando o CRM estiver em branco.
     invalidos = [
         "profissionais", "profissional", "nome completo", "soma", "total",
         "valor total", "relatorio", "servicos medicos", "municipio",
-        "competencia", "consolidado"
+        "competencia", "consolidado", "clinica", "empresa", "prestador"
     ]
+
     if any(nome_n.startswith(normalizar_texto(x)) for x in invalidos):
         return False
-    return crm_valido(crm)
+
+    crm_limpo = limpar_crm(crm)
+
+    # CRM preenchido continua precisando ser válido.
+    if crm_limpo:
+        return crm_valido(crm)
+
+    # CRM vazio não elimina o profissional. A existência de produção/valor
+    # será confirmada posteriormente antes de o lançamento ser incluído.
+    return True
 
 # ============================================================
 # CABEÇALHO PRINCIPAL
@@ -622,7 +653,7 @@ def extrair_atividades_largas(planilha, numero_linha, linha_cabecalho, colunas_p
             atividades.append({
                 "Profissional": str(nome).strip(),
                 "CRM": limpar_crm(crm),
-                "CRM_ID": chave_crm(crm),
+                "CRM_ID": chave_profissional(nome, crm),
                 "Codigo": codigo,
                 "Servico": servico,
                 "Tipo": campo,
@@ -804,7 +835,7 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
 
             if quantidade != 0 and (codigo_n or servico_n or categoria):
                 atividades.append({
-                    "Profissional": str(nome).strip(), "CRM": limpar_crm(crm), "CRM_ID": chave_crm(crm),
+                    "Profissional": str(nome).strip(), "CRM": limpar_crm(crm), "CRM_ID": chave_profissional(nome, crm),
                     "Codigo": codigo_n, "Servico": servico_n, "Tipo": categoria or "",
                     "Unidade de medida": unidade_n, "Quantidade": quantidade,
                     "Valor unitario": valor_unitario, "Valor bruto": valor_bruto, "Valor final": valor_final,
@@ -831,7 +862,7 @@ def ler_profissionais_da_aba(arquivo_bytes, nome_arquivo, nome_aba):
                 registros.append({
                     "Profissional": str(nome).strip(),
                     "CRM": limpar_crm(crm),
-                    "CRM_ID": chave_crm(crm),
+                    "CRM_ID": chave_profissional(nome, crm),
                     "Arquivo": nome_arquivo,
                     "Aba": nome_aba,
                     "Linha do Excel": numero_linha + 1,
@@ -2926,7 +2957,7 @@ elif pagina == "💰 Faturamento":
                 st.caption(
                     f"Fonte do valor total: {resumo.get('Fonte valor total', '—')}. "
                     "A coluna Nº CONSULTA recebe consultas + procedimentos + exames + interconsultas. "
-                    "Os profissionais são deduplicados por CRM entre os relatórios selecionados. "
+                    "Os profissionais são deduplicados por CRM; quando o CRM estiver ausente, pelo nome. "
                     "Quando houver mais de um relatório, cada parcela é preservada separadamente na fórmula da planilha."
                 )
 
