@@ -16,8 +16,8 @@ from openpyxl.utils import get_column_letter
 # CONFIGURAÇÃO
 # ============================================================
 NOME_SISTEMA = "Sistema de Validação e Faturamento Médico"
-VERSAO = "3.19"
-PARSER_VERSION = "3.19-valores-monetarios-deslocados"
+VERSAO = "3.20"
+PARSER_VERSION = "3.20-ignora-linhas-totalizadoras"
 URL_ICISMEP = "https://icismep.mg.gov.br/tabela-de-servicos-medicos-nos-municipios-entes-nao-consorciados/"
 
 st.set_page_config(page_title=NOME_SISTEMA, page_icon="📊", layout="wide")
@@ -258,7 +258,9 @@ def profissional_valido(nome, crm):
     # Evita que cabeçalhos, totais ou linhas de empresas/clínicas sejam
     # interpretados como profissionais quando o CRM estiver em branco.
     invalidos = [
-        "profissionais", "profissional", "nome completo", "soma", "total",
+        "profissionais", "profissional", "nome completo",
+        "soma", "subtotal", "total", "total geral",
+        "quantidade total", "qtd total", "quant total",
         "valor total", "relatorio", "servicos medicos", "municipio",
         "competencia", "consolidado", "clinica", "empresa", "prestador",
         "desconto", "retencao", "imposto", "iss", "inss"
