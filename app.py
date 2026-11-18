@@ -12,7 +12,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from conexao_supabase import testar_conexao
-from gerenciador_tabelas import testar_gerenciador, cadastrar_rascunho_excel, validar_dados_excel
+from gerenciador_tabelas import testar_gerenciador, cadastrar_rascunho_excel, validar_dados_excel, listar_rascunhos, conferir_rascunho, publicar_rascunho
 from leitor_excel_icismep import ler_excel_icismep
 
 # ============================================================
@@ -2857,6 +2857,67 @@ elif pagina == "📋 Tabelas de referência":
                 f"Último rascunho registrado nesta sessão: {ultimo_cadastro['versao_id']} "
                 f"({ultimo_cadastro['servicos']} serviços). Não publicado."
             )
+
+    st.divider()
+    st.subheader("✅ Conferir e publicar versão cadastrada")
+    st.caption("Publicação somente após conferir o total gravado, os valores e a competência. Não altera o Excel nem os relatórios já existentes.")
+    if usuario_logado_perfil() != "Administrador":
+        st.info("A publicação de tabelas está disponível somente para o perfil Administrador.")
+    else:
+        try:
+            rascunhos = listar_rascunhos()
+            if rascunhos.empty:
+                st.info("Não há versões em rascunho aguardando publicação.")
+            else:
+                opcoes = rascunhos.to_dict("records")
+                escolha = st.selectbox(
+                    "Versão em rascunho",
+                    options=range(len(opcoes)),
+                    format_func=lambda i: f"{opcoes[i].get('identificacao', 'Sem identificação')} | {opcoes[i].get('competencia_inicio', '')} | {str(opcoes[i]['id'])[:8]}",
+                    key="rascunho_publicar_escolha",
+                )
+                versao_selecionada = opcoes[escolha]
+                versao_id_publicar = str(versao_selecionada["id"])
+                if st.button("🔎 Conferir rascunho no Supabase", key="conferir_publicacao_supabase"):
+                    with st.spinner("Conferindo registros salvos..."):
+                        st.session_state["conferencia_publicacao_supabase"] = conferir_rascunho(versao_id_publicar)
+                conferencia = st.session_state.get("conferencia_publicacao_supabase")
+                if conferencia and conferencia.get("versao_id") == versao_id_publicar:
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Serviços gravados", conferencia["servicos"])
+                    c2.metric("Contratantes", conferencia["contratantes"])
+                    c3.metric("Valores inválidos", conferencia["valores_invalidos"])
+                    st.write(f"**Versão:** {conferencia['identificacao']} | **Competência:** {conferencia['competencia_inicio']} | **Situação:** {conferencia['status']}")
+                    if conferencia["valores_invalidos"]:
+                        st.error("Há valores inválidos. Esta versão não pode ser publicada.")
+                    total_esperado = st.number_input(
+                        "Total de serviços esperado conforme conferência do Excel",
+                        min_value=1, step=1, value=int(conferencia["servicos"]),
+                        key=f"total_esperado_{versao_id_publicar}",
+                    )
+                    confirmar_publicacao = st.checkbox(
+                        "Confirmo que conferi o Excel original, a competência e a quantidade de serviços desta versão.",
+                        key=f"confirmar_publicacao_{versao_id_publicar}",
+                    )
+                    if st.button(
+                        "📢 Publicar esta versão no Supabase",
+                        type="primary", key="publicar_versao_supabase",
+                        disabled=not confirmar_publicacao or conferencia["valores_invalidos"] != 0 or int(total_esperado) != conferencia["servicos"],
+                    ):
+                        try:
+                            with st.spinner("Validando novamente e publicando..."):
+                                publicado = publicar_rascunho(
+                                    versao_id_publicar, int(total_esperado), usuario_logado_nome()
+                                )
+                            st.session_state.pop("conferencia_publicacao_supabase", None)
+                            st.success(f"Versão publicada com sucesso! {publicado['servicos']} serviços disponíveis no Supabase.")
+                            st.code(publicado["versao_id"], language=None)
+                        except Exception as erro:
+                            st.error(f"Não foi possível publicar: {erro}")
+                elif conferencia:
+                    st.info("Clique em 'Conferir rascunho no Supabase' para verificar a versão selecionada.")
+        except Exception as erro:
+            st.error(f"Não foi possível consultar os rascunhos: {erro}")
 
     pdfs_ref = st.file_uploader("PDF(s) oficial(is) desta versão", type=["pdf"], accept_multiple_files=True, key="pdfs_referencia")
 
