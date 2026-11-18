@@ -193,19 +193,19 @@ def paginas_permitidas(perfil):
     todas = [
         "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório", "🔍 Análise",
         "⚠️ Divergências", "✅ Validação", "💰 Faturamento", "👨‍⚕️ Pesquisa de médicos",
-        "📚 Histórico", "⚙️ Configurações"
+        "🩺 Conferência de médicos e CRM", "📚 Histórico", "⚙️ Configurações"
     ]
 
     permissoes = {
         "Lançador": [
             "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
             "🔍 Análise", "⚠️ Divergências", "💰 Faturamento",
-            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
+            "👨‍⚕️ Pesquisa de médicos", "🩺 Conferência de médicos e CRM", "📚 Histórico"
         ],
         "Validador": [
             "🏠 Início", "📋 Tabelas de referência", "📤 Novo relatório",
             "🔍 Análise", "⚠️ Divergências", "✅ Validação",
-            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
+            "👨‍⚕️ Pesquisa de médicos", "🩺 Conferência de médicos e CRM", "📚 Histórico"
         ],
         "Administrador": todas,
     }
@@ -2568,6 +2568,58 @@ def gerar_planilha_faturamento(arquivo_bytes, competencia, entidade, resumo, apl
     return saida.getvalue(), linha_alvo
 
 
+
+# ============================================================
+# AUDITORIA INDEPENDENTE DE NOMES E CRM
+# ============================================================
+@st.cache_data(show_spinner=False)
+def carregar_base_medicos(caminho="base_medicos.csv"):
+    from pathlib import Path
+    caminho = Path(__file__).resolve().parent / caminho
+    base = pd.read_csv(caminho, sep=";", dtype=str, encoding="utf-8-sig").fillna("")
+    base["nome_chave"] = base["Profissional"].map(normalizar_texto)
+    base["crm_chave"] = base["CRM"].map(chave_crm)
+    return base
+
+
+def auditar_medicos(dados, base):
+    from collections import defaultdict
+    por_crm, por_nome = defaultdict(list), defaultdict(list)
+    for r in base.to_dict("records"):
+        if r["crm_chave"]:
+            por_crm[r["crm_chave"]].append(r)
+        if r["nome_chave"]:
+            por_nome[r["nome_chave"]].append(r)
+    resultados = []
+    for r in dados.to_dict("records"):
+        nome = str(r.get("Profissional", "") or "").strip()
+        crm = limpar_crm(r.get("CRM", ""))
+        n, c = normalizar_texto(nome), chave_crm(crm)
+        candidatos = por_crm.get(c, []) if c else []
+        nomes = {x["nome_chave"] for x in candidatos}
+        if not c:
+            status = "CRM ausente"
+            sugestao = ""
+        elif candidatos and n in nomes:
+            status = "Coincidente na base"
+            sugestao = nome
+        elif candidatos:
+            status = "Nome divergente para CRM"
+            sugestao = max(candidatos, key=lambda x: SequenceMatcher(None,n,x["nome_chave"]).ratio())["Profissional"]
+        elif n in por_nome:
+            status = "CRM divergente para nome"
+            sugestao = ", ".join(sorted({str(x["CRM"]) for x in por_nome[n]}))
+        else:
+            status = "Não localizado na base"
+            sugestao = ""
+        resultados.append({
+            "Situação": status, "Nome no relatório": nome, "CRM no relatório": crm,
+            "Referência / sugestão": sugestao,
+            "Arquivo": r.get("Arquivo", ""), "Aba": r.get("Aba", ""),
+            "Linha do Excel": r.get("Linha do Excel", ""),
+        })
+    return pd.DataFrame(resultados)
+
 # ============================================================
 # LOGIN + MENU
 # ============================================================
@@ -3282,6 +3334,41 @@ elif pagina == "💰 Faturamento":
                                         st.error("Não consegui lançar na planilha oficial.")
                                         with st.expander("Ver detalhes do erro"):
                                             st.code(str(erro))
+
+elif pagina == "🩺 Conferência de médicos e CRM":
+    st.title("🩺 Conferência de médicos e CRM")
+    st.caption("Comparação com a base interna de referência; não é consulta oficial ao CRM.")
+    try:
+        base_medicos = carregar_base_medicos()
+    except Exception as erro:
+        st.error(f"Base de referência não encontrada ou inválida: {erro}")
+        st.stop()
+    st.metric("Registros na base", len(base_medicos))
+    relatorios = relatorios_analisados_sessao()
+    if not relatorios:
+        st.info("Primeiro analise um relatório na página 'Novo relatório'.")
+    else:
+        escolhas = st.multiselect(
+            "Relatórios para conferir",
+            options=list(relatorios.keys()),
+            format_func=lambda k: rotulo_relatorio_sessao(k, relatorios[k]),
+            default=list(relatorios.keys()),
+        )
+        frames = [relatorios[k]["dados"] for k in escolhas if not relatorios[k]["dados"].empty]
+        if frames:
+            dados_auditoria = pd.concat(frames, ignore_index=True)
+            resultado = auditar_medicos(dados_auditoria, base_medicos)
+            situacoes = sorted(resultado["Situação"].unique().tolist())
+            filtro = st.multiselect("Filtrar situações", situacoes, default=situacoes)
+            exibicao = resultado[resultado["Situação"].isin(filtro)]
+            st.dataframe(exibicao, use_container_width=True, hide_index=True)
+            st.download_button(
+                "⬇️ Exportar auditoria (CSV)",
+                data=exibicao.to_csv(index=False, sep=";").encode("utf-8-sig"),
+                file_name="auditoria_medicos_crm.csv", mime="text/csv",
+            )
+        else:
+            st.info("Selecione pelo menos um relatório com registros médicos.")
 
 elif pagina == "👨‍⚕️ Pesquisa de médicos":
     st.title("👨‍⚕️ Pesquisa de médicos")
