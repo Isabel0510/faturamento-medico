@@ -2645,6 +2645,121 @@ st.sidebar.caption(f"Versão {VERSAO}")
 # ============================================================
 # PÁGINAS
 # ============================================================
+# ============================================================
+# CONFERÊNCIA INDEPENDENTE DE PREÇOS PUBLICADOS (SOMENTE LEITURA)
+# ============================================================
+def comparar_precos_publicados(atividades, servicos, municipio):
+    """Compara somente correspondências inequívocas; não altera lançamentos."""
+    if atividades is None or atividades.empty:
+        return pd.DataFrame()
+    alvo = normalizar_texto(municipio)
+    refs = servicos.copy()
+    refs = refs[refs["municipio"].fillna("").map(normalizar_texto) == alvo].copy()
+    refs["_codigo"] = refs["codigo"].map(normalizar_codigo)
+    refs["_descricao"] = refs["descricao"].map(limpar_descricao_servico)
+    refs["_unidade"] = refs["unidade_medida"].map(normalizar_texto)
+    linhas = []
+    for _, atividade in atividades.iterrows():
+        codigo = normalizar_codigo(atividade.get("Codigo"))
+        descricao = limpar_descricao_servico(atividade.get("Servico"))
+        unidade = normalizar_texto(atividade.get("Unidade de medida"))
+        cobrado = converter_numero(atividade.get("Valor unitario"))
+        quantidade = converter_numero(atividade.get("Quantidade"))
+        candidatos = refs[refs["_codigo"] == codigo] if codigo else refs.iloc[0:0]
+        if descricao and not candidatos.empty:
+            candidatos = candidatos[candidatos["_descricao"] == descricao]
+        if unidade and not candidatos.empty:
+            candidatos = candidatos[candidatos["_unidade"] == unidade]
+        status = "Não encontrado"
+        oficial = None
+        diferenca = None
+        if len(candidatos) == 1:
+            oficial = converter_numero(candidatos.iloc[0]["valor"])
+            if cobrado <= 0:
+                status = "Valor cobrado ausente"
+            elif abs(cobrado - oficial) <= 0.02:
+                status = "Conforme"
+                diferenca = round(cobrado - oficial, 2)
+            else:
+                status = "Acima do oficial" if cobrado > oficial else "Abaixo do oficial"
+                diferenca = round(cobrado - oficial, 2)
+        elif len(candidatos) > 1:
+            status = "Correspondência ambígua"
+        linhas.append({
+            "Arquivo": atividade.get("Arquivo", ""),
+            "Linha do Excel": atividade.get("Linha do Excel", ""),
+            "Profissional": atividade.get("Profissional", ""),
+            "Código": codigo,
+            "Serviço": atividade.get("Servico", ""),
+            "Unidade": atividade.get("Unidade de medida", ""),
+            "Quantidade": quantidade,
+            "Valor cobrado": cobrado if cobrado > 0 else None,
+            "Valor oficial": oficial,
+            "Diferença unitária": diferenca,
+            "Situação": status,
+        })
+    return pd.DataFrame(linhas)
+
+
+def mostrar_conferencia_supabase_relatorio(relatorio):
+    st.divider()
+    st.subheader("🧾 Conferência de preços com tabela publicada no Supabase")
+    st.caption("Consulta independente. Não modifica os valores, a auditoria existente ou o faturamento.")
+    try:
+        versoes = listar_versoes()
+        if versoes.empty:
+            st.info("Não há versões publicadas no Supabase.")
+            return
+        competencia = str(relatorio.get("competencia", "")).strip()
+        if not competencia_valida(competencia):
+            st.warning("Competência do relatório inválida; não é possível selecionar uma tabela automaticamente.")
+            return
+        mes, ano = map(int, competencia.split("/"))
+        data_comp = date(ano, mes, 1)
+        elegiveis = []
+        for versao in versoes.to_dict("records"):
+            try:
+                inicio = pd.to_datetime(versao.get("competencia_inicio"), errors="coerce")
+                fim_bruto = versao.get("competencia_fim")
+                fim = pd.to_datetime(fim_bruto, errors="coerce") if fim_bruto else pd.NaT
+                if pd.isna(inicio):
+                    continue
+                inicio_mes = date(inicio.year, inicio.month, 1)
+                fim_mes = date(fim.year, fim.month, 1) if not pd.isna(fim) else None
+                if inicio_mes <= data_comp and (fim_mes is None or data_comp <= fim_mes):
+                    elegiveis.append(versao)
+            except (ValueError, TypeError):
+                continue
+        if len(elegiveis) != 1:
+            st.warning(f"Foram encontradas {len(elegiveis)} versões publicadas compatíveis com {competencia}. A conferência exige exatamente uma versão aplicável; revise as competências das tabelas.")
+            return
+        versao = elegiveis[0]
+        st.write("**Tabela:**", versao.get("identificacao", ""))
+        st.write("**Município / contratante:**", relatorio.get("municipio", ""))
+        if st.button("🔎 Comparar preços com o Supabase", key="comparar_supabase_" + str(relatorio.get("arquivo", ""))):
+            with st.spinner("Consultando preços oficiais e comparando serviços..."):
+                servicos = listar_servicos(str(versao["id"]))
+                resultado = comparar_precos_publicados(relatorio["atividades"], servicos, relatorio.get("municipio", ""))
+            st.session_state["conferencia_precos_supabase"] = {
+                "relatorio": relatorio.get("arquivo", ""),
+                "versao": str(versao["id"]),
+                "municipio": relatorio.get("municipio", ""),
+                "resultado": resultado,
+            }
+        consulta = st.session_state.get("conferencia_precos_supabase")
+        if not consulta or consulta["relatorio"] != relatorio.get("arquivo", "") or consulta["versao"] != str(versao["id"]) or consulta["municipio"] != relatorio.get("municipio", ""):
+            return
+        resultado = consulta["resultado"]
+        if resultado.empty:
+            st.info("O relatório não contém atividades detalhadas para comparação.")
+            return
+        st.write("**Resultado da conferência:**")
+        st.dataframe(resultado, use_container_width=True, hide_index=True)
+        st.caption("'Não encontrado' e 'Correspondência ambígua' exigem conferência manual. Nenhuma divergência é lançada automaticamente no faturamento.")
+        st.download_button("📥 Exportar conferência (CSV)", resultado.to_csv(index=False, sep=";").encode("utf-8-sig"), file_name="conferencia_precos_supabase.csv", mime="text/csv", key="baixar_conferencia_supabase")
+    except Exception as erro:
+        st.error(f"Não foi possível conferir preços no Supabase: {erro}")
+
 if pagina == "🏠 Início":
     st.title("🏠 Início")
     st.write("Sistema para leitura, conferência, validação e faturamento de serviços médicos.")
@@ -3349,6 +3464,7 @@ elif pagina == "🔍 Análise":
         mostrar_analise(
             relatorio["dados"], relatorio["atividades"], relatorio["diagnostico"]
         )
+        mostrar_conferencia_supabase_relatorio(relatorio)
 
 elif pagina == "⚠️ Divergências":
     st.title("⚠️ Divergências")
