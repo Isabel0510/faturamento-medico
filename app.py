@@ -12,7 +12,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from conexao_supabase import testar_conexao
-from gerenciador_tabelas import testar_gerenciador, cadastrar_rascunho_excel, validar_dados_excel, listar_rascunhos, conferir_rascunho, publicar_rascunho
+from gerenciador_tabelas import testar_gerenciador, cadastrar_rascunho_excel, validar_dados_excel, listar_rascunhos, conferir_rascunho, publicar_rascunho, listar_versoes, listar_servicos
 from leitor_excel_icismep import ler_excel_icismep
 
 # ============================================================
@@ -2918,6 +2918,85 @@ elif pagina == "📋 Tabelas de referência":
                     st.info("Clique em 'Conferir rascunho no Supabase' para verificar a versão selecionada.")
         except Exception as erro:
             st.error(f"Não foi possível consultar os rascunhos: {erro}")
+
+    st.divider()
+    st.subheader("📚 Consultar tabela publicada no Supabase")
+    st.caption("Consulta somente para leitura. Não altera os preços nem interfere na auditoria e no faturamento.")
+    try:
+        versoes_publicadas = listar_versoes()
+        if versoes_publicadas.empty:
+            st.info("Ainda não há tabelas publicadas no Supabase.")
+        else:
+            opcoes_publicadas = versoes_publicadas.to_dict("records")
+            indice_publicada = st.selectbox(
+                "Selecione a versão publicada",
+                options=range(len(opcoes_publicadas)),
+                format_func=lambda i: (
+                    f"{opcoes_publicadas[i].get('identificacao', 'Sem identificação')} | "
+                    f"{opcoes_publicadas[i].get('competencia_inicio', '')} | "
+                    f"{str(opcoes_publicadas[i].get('id', ''))[:8]}"
+                ),
+                key="consulta_versao_publicada",
+            )
+            versao_consulta = opcoes_publicadas[indice_publicada]
+            id_consulta = str(versao_consulta["id"])
+            if st.button("🔎 Carregar serviços da versão publicada", key="carregar_servicos_publicados"):
+                with st.spinner("Consultando os serviços publicados no Supabase..."):
+                    servicos_consulta = listar_servicos(id_consulta)
+                st.session_state["consulta_servicos_publicados"] = {
+                    "versao_id": id_consulta,
+                    "dados": servicos_consulta,
+                }
+            consulta_atual = st.session_state.get("consulta_servicos_publicados")
+            if consulta_atual and consulta_atual.get("versao_id") == id_consulta:
+                servicos_consulta = consulta_atual["dados"]
+                if servicos_consulta.empty:
+                    st.warning("Esta versão não possui serviços cadastrados.")
+                else:
+                    municipios_consulta = sorted(
+                        servicos_consulta["municipio"].dropna().astype(str).str.strip().unique().tolist()
+                    )
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Serviços publicados", len(servicos_consulta))
+                    c2.metric("Municípios / contratantes", len(municipios_consulta))
+                    c3.metric("Competência inicial", str(versao_consulta.get("competencia_inicio", "")))
+                    municipio_filtro = st.selectbox(
+                        "Filtrar por município / contratante",
+                        ["Todos"] + municipios_consulta,
+                        key=f"municipio_consulta_{id_consulta}",
+                    )
+                    termo_filtro = st.text_input(
+                        "Pesquisar descrição ou código do serviço",
+                        key=f"texto_consulta_{id_consulta}",
+                    ).strip()
+                    filtrados = servicos_consulta.copy()
+                    if municipio_filtro != "Todos":
+                        filtrados = filtrados[
+                            filtrados["municipio"].fillna("").astype(str).str.strip() == municipio_filtro
+                        ]
+                    if termo_filtro:
+                        texto_pesquisa = re.escape(termo_filtro)
+                        descricoes = filtrados["descricao"].fillna("").astype(str)
+                        codigos = filtrados["codigo"].fillna("").astype(str)
+                        filtrados = filtrados[
+                            descricoes.str.contains(texto_pesquisa, case=False, regex=True)
+                            | codigos.str.contains(texto_pesquisa, case=False, regex=True)
+                        ]
+                    st.write(f"**Serviços encontrados no filtro:** {len(filtrados)}")
+                    colunas_exibicao = [
+                        "municipio", "codigo", "descricao", "unidade_medida",
+                        "tipo_servico", "secao", "valor",
+                    ]
+                    colunas_exibicao = [c for c in colunas_exibicao if c in filtrados.columns]
+                    st.dataframe(
+                        filtrados[colunas_exibicao],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            else:
+                st.info("Clique em 'Carregar serviços da versão publicada' para consultar os preços oficiais.")
+    except Exception as erro:
+        st.error(f"Não foi possível consultar as versões publicadas: {erro}")
 
     pdfs_ref = st.file_uploader("PDF(s) oficial(is) desta versão", type=["pdf"], accept_multiple_files=True, key="pdfs_referencia")
 
