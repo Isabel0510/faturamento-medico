@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from conexao_supabase import testar_conexao
 from gerenciador_tabelas import testar_gerenciador
+from leitor_excel_icismep import ler_excel_icismep
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -2664,6 +2665,81 @@ elif pagina == "📋 Tabelas de referência":
     competencia_ref = col1.text_input("Competência da tabela", value=date.today().strftime("%m/%Y"), placeholder="09/2026")
     data_tabela_ref = col2.date_input("Data da tabela / atualização", value=date.today(), key="data_tabela_referencia")
     versao_ref = st.text_input("Versão / identificação", placeholder="Ex.: Tabela inicial, Atualização I, Atualização II")
+  
+    st.subheader("📊 Nova tabela ICISMEP em Excel")
+
+    excel_ref = st.file_uploader(
+        "Selecione a tabela ICISMEP (.xlsx)",
+        type=["xlsx"],
+        key="excel_referencia_icismep",
+    )
+
+    if excel_ref is not None:
+        if st.button("🔍 Conferir tabela Excel"):
+            try:
+                with st.spinner("Lendo os serviços ICISMEP..."):
+                    dados_excel = ler_excel_icismep(
+                        excel_ref.getvalue()
+                    )
+
+                st.session_state["previa_excel_icismep"] = {
+                    "arquivo": excel_ref.name,
+                    "dados": dados_excel,
+                }
+
+            except Exception as erro:
+                st.session_state.pop(
+                    "previa_excel_icismep", None
+                )
+                st.error(f"Erro na leitura: {erro}")
+
+    previa_excel = st.session_state.get(
+        "previa_excel_icismep"
+    )
+
+    if previa_excel:
+        dados_excel = previa_excel["dados"]
+
+        st.success("Excel lido com sucesso!")
+
+        col_a, col_b = st.columns(2)
+
+        col_a.metric(
+            "Serviços encontrados",
+            len(dados_excel),
+        )
+
+        col_b.metric(
+            "Municípios / Contratantes",
+            dados_excel["Municipio"].nunique(),
+        )
+
+        if len(dados_excel) != 3507:
+            st.warning(
+                "A quantidade encontrada é diferente dos "
+                "3.507 serviços da versão 13/11/2026. "
+                "Confira o arquivo antes de publicar."
+            )
+
+        st.dataframe(
+            dados_excel[
+                [
+                    "Municipio",
+                    "Descricao referencia",
+                    "Tipo servico original",
+                    "Unidade referencia",
+                    "Valor oficial",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.info(
+            "Pré-visualização concluída. "
+            "Nenhum dado foi gravado no Supabase."
+        )
+
     pdfs_ref = st.file_uploader("PDF(s) oficial(is) desta versão", type=["pdf"], accept_multiple_files=True, key="pdfs_referencia")
 
     st.divider()
