@@ -12,6 +12,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from conexao_supabase import testar_conexao
+from gerenciador_tabelas import testar_gerenciador
 
 # ============================================================
 # CONFIGURAÇÃO
