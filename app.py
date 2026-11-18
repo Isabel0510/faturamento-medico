@@ -3942,11 +3942,13 @@ elif pagina == "📚 Histórico":
                 mime="text/csv",
             )
 
+
 elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
     st.write(f"Versão atual: {VERSAO}")
     st.code(URL_ICISMEP)
-  st.divider()
+
+    st.divider()
     st.subheader("🗄️ Conexão com Supabase")
 
     if st.button("🔌 Testar conexão com o banco"):
