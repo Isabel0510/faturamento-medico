@@ -2666,6 +2666,76 @@ elif pagina == "📋 Tabelas de referência":
     versao_ref = st.text_input("Versão / identificação", placeholder="Ex.: Tabela inicial, Atualização I, Atualização II")
     pdfs_ref = st.file_uploader("PDF(s) oficial(is) desta versão", type=["pdf"], accept_multiple_files=True, key="pdfs_referencia")
 
+    st.divider()
+    st.subheader("🔎 Pré-visualização da tabela")
+
+    if pdfs_ref:
+        pdf_previa = st.selectbox(
+            "Selecione o PDF para conferir",
+            options=range(len(pdfs_ref)),
+            format_func=lambda i: pdfs_ref[i].name,
+            key="pdf_previa_icismep"
+        )
+
+        arquivo_previa = pdfs_ref[pdf_previa]
+
+        if st.button("🔍 Conferir códigos e valores"):
+            try:
+                with st.spinner("Lendo a tabela ICISMEP..."):
+                    dados_previa = extrair_referencias_pdf(
+                        arquivo_previa.getvalue()
+                    )
+
+                if dados_previa.empty:
+                    st.warning(
+                        "Nenhum procedimento foi identificado. "
+                        "Confira o formato do PDF."
+                    )
+                else:
+                    st.session_state["previa_tabela_icismep"] = {
+                        "arquivo": arquivo_previa.name,
+                        "dados": dados_previa
+                    }
+
+            except Exception as erro:
+                st.error(
+                    "Não foi possível interpretar o PDF. "
+                    f"Detalhes: {erro}"
+                )
+
+    previa = st.session_state.get("previa_tabela_icismep")
+
+    if previa:
+        st.write("**Arquivo:**", previa["arquivo"])
+
+        dados = previa["dados"]
+
+        c1, c2 = st.columns(2)
+        c1.metric("Procedimentos encontrados", len(dados))
+        c2.metric(
+            "Seções identificadas",
+            dados["Secao referencia"].nunique()
+        )
+
+        st.dataframe(
+            dados[
+                [
+                    "Codigo",
+                    "Descricao referencia",
+                    "Unidade referencia",
+                    "Secao referencia",
+                    "Valor oficial"
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.info(
+            "Esta é apenas uma pré-visualização. "
+            "Os dados ainda não foram salvos no Supabase."
+        )
+
     if st.button("📥 Cadastrar tabela(s)", type="primary"):
         if not competencia_valida(competencia_ref):
             st.error("Informe a competência no formato MM/AAAA.")
