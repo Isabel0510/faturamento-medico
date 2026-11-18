@@ -1,20 +1,30 @@
+
 import streamlit as st
 from supabase import create_client
-from urllib.parse import urlparse
 
 
-@st.cache_resource
 def conectar_supabase():
-    url = st.secrets["supabase"]["url"].strip()
-    chave = st.secrets["supabase"]["key"].strip()
+    url = str(st.secrets["supabase"]["url"]).strip()
+    chave = str(st.secrets["supabase"]["key"]).strip()
 
     return create_client(url, chave)
 
 
 def testar_conexao():
     try:
-        url = st.secrets["supabase"]["url"].strip()
-        endereco = urlparse(url)
+        cliente = conectar_supabase()
 
-        if (
-            endereco.scheme != "https"
+        resposta = (
+            cliente.table("icismep_versoes")
+            .select("id")
+            .limit(1)
+            .execute()
+        )
+
+        return True, "Conexão estabelecida com sucesso!"
+
+    except Exception as erro:
+        return False, (
+            "Falha na conexão com o Supabase. "
+            f"Tipo do erro: {type(erro).__name__}"
+        )
