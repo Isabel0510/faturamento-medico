@@ -2713,7 +2713,8 @@ elif pagina == "📋 Tabelas de referência":
             "Municípios / Contratantes",
             dados_excel["Municipio"].nunique(),
         )
-   st.write("### Municípios / Contratantes identificados")
+   
+        st.write("### Municípios / Contratantes identificados")
 
         nomes = (
             dados_excel["Municipio"]
@@ -2725,8 +2726,9 @@ elif pagina == "📋 Tabelas de referência":
         st.dataframe(
             nomes,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
         )
+
         if len(dados_excel) != 3507:
             st.warning(
                 "A quantidade encontrada é diferente dos "
