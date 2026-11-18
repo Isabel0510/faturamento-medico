@@ -12,7 +12,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from conexao_supabase import testar_conexao
-from gerenciador_tabelas import testar_gerenciador
+from gerenciador_tabelas import testar_gerenciador, cadastrar_rascunho_excel, validar_dados_excel
 from leitor_excel_icismep import ler_excel_icismep
 
 # ============================================================
@@ -2684,6 +2684,7 @@ elif pagina == "📋 Tabelas de referência":
 
                 st.session_state["previa_excel_icismep"] = {
                     "arquivo": excel_ref.name,
+                    "hash": hashlib.sha256(excel_ref.getvalue()).hexdigest(),
                     "dados": dados_excel,
                 }
 
@@ -2777,10 +2778,85 @@ elif pagina == "📋 Tabelas de referência":
             hide_index=True,
         )
 
-        st.info(
-            "Pré-visualização concluída. "
-            "Nenhum dado foi gravado no Supabase."
+        st.divider()
+        st.subheader("💾 Cadastro permanente no Supabase")
+        st.caption(
+            "O cadastro salva uma nova versão como RASCUNHO. "
+            "Ela não será utilizada na auditoria até ser conferida e publicada."
         )
+        try:
+            resumo_cadastro = validar_dados_excel(dados_excel)
+            st.write(
+                f"Conferência para cadastro: {resumo_cadastro['servicos']} serviços, "
+                f"{resumo_cadastro['contratantes']} municípios/contratantes e "
+                f"{resumo_cadastro['grupos']} grupos de tabela."
+            )
+            erro_validacao = None
+        except Exception as erro:
+            erro_validacao = str(erro)
+            st.error(f"Não é possível cadastrar: {erro_validacao}")
+
+        observacoes_excel = st.text_area(
+            "Observações da versão Excel (opcional)",
+            key="observacoes_versao_excel",
+            placeholder="Ex.: Tabela recebida em 13/11/2026; conferência dos contratantes pendente.",
+        )
+        confirmar_excel = st.checkbox(
+            "Conferi os dados e quero cadastrar esta versão como rascunho.",
+            key="confirmar_cadastro_excel",
+        )
+        arquivo_confere = (
+            excel_ref is not None
+            and excel_ref.name == previa_excel["arquivo"]
+            and hashlib.sha256(excel_ref.getvalue()).hexdigest() == previa_excel.get("hash")
+        )
+        if not arquivo_confere:
+            st.warning("O arquivo enviado mudou. Clique novamente em 'Conferir tabela Excel' antes de salvar.")
+        if st.button(
+            "💾 Salvar Excel como rascunho no Supabase",
+            type="primary",
+            disabled=bool(erro_validacao) or not confirmar_excel or not arquivo_confere,
+            key="salvar_excel_supabase",
+        ):
+            try:
+                competencia_informada = str(competencia_ref).strip()
+                if not competencia_valida(competencia_informada):
+                    raise ValueError("Informe a competência no formato MM/AAAA, por exemplo 11/2026.")
+                if not str(versao_ref).strip():
+                    raise ValueError("Preencha o campo 'Versão / identificação' antes de salvar.")
+                mes_ref, ano_ref = (int(parte) for parte in competencia_informada.split("/"))
+                data_competencia = date(ano_ref, mes_ref, 1)
+                with st.spinner("Salvando serviços no Supabase. Aguarde a conferência final..."):
+                    resultado_cadastro = cadastrar_rascunho_excel(
+                        dados=dados_excel,
+                        arquivo_bytes=excel_ref.getvalue(),
+                        nome_arquivo=excel_ref.name,
+                        identificacao=versao_ref.strip(),
+                        competencia_inicio=data_competencia,
+                        data_publicacao=data_tabela_ref,
+                        cadastrado_por=usuario_logado_nome(),
+                        observacoes=observacoes_excel,
+                    )
+                st.session_state["ultimo_rascunho_excel"] = resultado_cadastro
+                st.success(
+                    f"Rascunho cadastrado! {resultado_cadastro['servicos']} serviços "
+                    "conferidos no Supabase. A versão ainda NÃO está publicada."
+                )
+                st.code(str(resultado_cadastro["versao_id"]), language=None)
+            except Exception as erro:
+                st.error(
+                    "Não foi possível concluir o cadastro. "
+                    "Se a gravação foi interrompida, pode existir um rascunho parcial "
+                    "que precisa ser conferido antes de tentar novamente. "
+                    f"Detalhes: {erro}"
+                )
+
+        ultimo_cadastro = st.session_state.get("ultimo_rascunho_excel")
+        if ultimo_cadastro:
+            st.info(
+                f"Último rascunho registrado nesta sessão: {ultimo_cadastro['versao_id']} "
+                f"({ultimo_cadastro['servicos']} serviços). Não publicado."
+            )
 
     pdfs_ref = st.file_uploader("PDF(s) oficial(is) desta versão", type=["pdf"], accept_multiple_files=True, key="pdfs_referencia")
 
