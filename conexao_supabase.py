@@ -10,21 +10,39 @@ def conectar_supabase():
     return create_client(url, chave)
 
 
+
 def testar_conexao():
     try:
         cliente = conectar_supabase()
 
-        resposta = (
-            cliente.table("icismep_versoes")
-            .select("id")
-            .limit(1)
+        cliente.table("icismep_versoes") \
+            .select("id") \
+            .limit(1) \
             .execute()
-        )
 
         return True, "Conexão estabelecida com sucesso!"
 
     except Exception as erro:
+        tipo = type(erro).__name__
+        codigo = getattr(erro, "code", None)
+        status = getattr(erro, "status_code", None)
+
+        detalhes = f"Tipo: {tipo}"
+
+        if codigo:
+            detalhes += f" | Código: {codigo}"
+
+        if status:
+            detalhes += f" | HTTP: {status}"
+
+        if tipo == "APIError":
+            return False, (
+                "O Supabase respondeu, mas não autorizou "
+                "ou não conseguiu executar a consulta. "
+                + detalhes
+            )
+
         return False, (
-            "Falha na conexão com o Supabase. "
-            f"Tipo do erro: {type(erro).__name__}"
+            "Não foi possível completar a conexão. "
+            + detalhes
         )
