@@ -3959,3 +3959,14 @@ elif pagina == "⚙️ Configurações":
             st.success(mensagem)
         else:
             st.error(mensagem)
+
+    st.divider()
+    st.subheader("📋 Gerenciador de Tabelas ICISMEP")
+
+    if st.button("📚 Testar gerenciador de tabelas"):
+        sucesso, mensagem = testar_gerenciador()
+
+        if sucesso:
+            st.success(mensagem)
+        else:
+            st.error(mensagem)
