@@ -169,3 +169,68 @@ def cadastrar_rascunho_excel(dados, arquivo_bytes, nome_arquivo, identificacao,
             "Não publique esta versão."
         )
     return {"versao_id": versao_id, **resumo, "status": "rascunho"}
+
+
+# Publicação controlada das versões cadastradas.
+def listar_rascunhos():
+    cliente = conectar_supabase()
+    resposta = (cliente.table("icismep_versoes").select("*")
+                .eq("status", "rascunho")
+                .order("criado_em", desc=True).execute())
+    return pd.DataFrame(resposta.data or [])
+
+
+def conferir_rascunho(versao_id):
+    cliente = conectar_supabase()
+    versoes = (cliente.table("icismep_versoes").select("*")
+               .eq("id", str(versao_id)).limit(1).execute()).data or []
+    if not versoes:
+        raise ValueError("Versão não encontrada no Supabase.")
+    versao = versoes[0]
+    if versao.get("status") != "rascunho":
+        raise ValueError("Somente versões em rascunho podem ser publicadas.")
+    dados = listar_servicos(versao_id)
+    if dados.empty:
+        raise ValueError("A versão não possui serviços cadastrados.")
+    valores = pd.to_numeric(dados["valor"], errors="coerce")
+    invalidos = int((valores.isna() | (valores <= 0)).sum())
+    municipios = dados["municipio"].fillna("").astype(str).str.strip()
+    descricoes = dados["descricao"].fillna("").astype(str).str.strip()
+    unidades = dados["unidade_medida"].fillna("").astype(str).str.strip()
+    invalidos += int(((municipios == "") | (descricoes == "") | (unidades == "")).sum())
+    return {
+        "versao_id": str(versao_id),
+        "identificacao": versao.get("identificacao", ""),
+        "competencia_inicio": versao.get("competencia_inicio", ""),
+        "status": versao.get("status", ""),
+        "servicos": len(dados),
+        "contratantes": int(municipios[municipios != ""].nunique()),
+        "valores_invalidos": invalidos,
+    }
+
+
+def publicar_rascunho(versao_id, total_esperado, publicado_por):
+    from datetime import datetime, timezone
+    cliente = conectar_supabase()
+    conferencia = conferir_rascunho(versao_id)
+    if conferencia["servicos"] != int(total_esperado):
+        raise ValueError("Quantidade de serviços diferente da conferência do Excel.")
+    if conferencia["valores_invalidos"]:
+        raise ValueError("Existem registros incompletos ou com valores inválidos.")
+    if not str(publicado_por or "").strip():
+        raise ValueError("É necessário identificar o responsável pela publicação.")
+    # Evita duas versões publicadas para a mesma competência sem uma
+    # operação explícita de substituição (que será implementada separadamente).
+    publicadas = (cliente.table("icismep_versoes").select("id,identificacao")
+                  .eq("status", "publicada")
+                  .eq("competencia_inicio", conferencia["competencia_inicio"])
+                  .limit(1).execute()).data or []
+    if publicadas:
+        raise ValueError("Já existe uma versão publicada para esta competência. Não foi feita substituição.")
+    agora = datetime.now(timezone.utc).isoformat()
+    resposta = (cliente.table("icismep_versoes")
+                .update({"status": "publicada", "publicado_em": agora})
+                .eq("id", str(versao_id)).eq("status", "rascunho").execute())
+    if not resposta.data:
+        raise RuntimeError("A publicação não foi confirmada pelo Supabase.")
+    return conferencia
