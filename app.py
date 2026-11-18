@@ -188,21 +188,21 @@ def exigir_login():
 
 def paginas_permitidas(perfil):
     todas = [
-        "🏠 Início", "📤 Novo relatório", "🔍 Análise",
+        "🏠 Início", "📤 Novo relatório", "🩺 Conferência de médicos e CRM", "🔍 Análise",
         "💰 Faturamento", "👨‍⚕️ Pesquisa de médicos",
-        "🩺 Conferência de médicos e CRM", "📚 Histórico", "⚙️ Configurações"
+        "📚 Histórico", "⚙️ Configurações"
     ]
 
     permissoes = {
         "Lançador": [
-            "🏠 Início", "📤 Novo relatório",
+            "🏠 Início", "📤 Novo relatório", "🩺 Conferência de médicos e CRM",
             "🔍 Análise", "💰 Faturamento",
-            "👨‍⚕️ Pesquisa de médicos", "🩺 Conferência de médicos e CRM", "📚 Histórico"
+            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
         ],
         "Validador": [
-            "🏠 Início", "📤 Novo relatório",
+            "🏠 Início", "📤 Novo relatório", "🩺 Conferência de médicos e CRM",
             "🔍 Análise",
-            "👨‍⚕️ Pesquisa de médicos", "🩺 Conferência de médicos e CRM", "📚 Histórico"
+            "👨‍⚕️ Pesquisa de médicos", "📚 Histórico"
         ],
         "Administrador": todas,
     }
