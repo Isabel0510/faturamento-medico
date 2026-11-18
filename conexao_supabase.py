@@ -11,6 +11,7 @@ def conectar_supabase():
 
 
 
+
 def testar_conexao():
     try:
         cliente = conectar_supabase()
@@ -24,25 +25,13 @@ def testar_conexao():
 
     except Exception as erro:
         tipo = type(erro).__name__
-        codigo = getattr(erro, "code", None)
-        status = getattr(erro, "status_code", None)
-
-        detalhes = f"Tipo: {tipo}"
-
-        if codigo:
-            detalhes += f" | Código: {codigo}"
-
-        if status:
-            detalhes += f" | HTTP: {status}"
-
-        if tipo == "APIError":
-            return False, (
-                "O Supabase respondeu, mas não autorizou "
-                "ou não conseguiu executar a consulta. "
-                + detalhes
-            )
+        codigo = getattr(erro, "code", "")
+        mensagem = getattr(erro, "message", "")
+        detalhes = getattr(erro, "details", "")
 
         return False, (
-            "Não foi possível completar a conexão. "
-            + detalhes
+            f"Tipo: {tipo}\n\n"
+            f"Código: {codigo}\n\n"
+            f"Mensagem: {mensagem}\n\n"
+            f"Detalhes: {detalhes}"
         )
