@@ -11,6 +11,7 @@ import streamlit as st
 import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+from conexao_supabase import testar_conexao
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -3945,3 +3946,13 @@ elif pagina == "⚙️ Configurações":
     st.title("⚙️ Configurações")
     st.write(f"Versão atual: {VERSAO}")
     st.code(URL_ICISMEP)
+  st.divider()
+    st.subheader("🗄️ Conexão com Supabase")
+
+    if st.button("🔌 Testar conexão com o banco"):
+        sucesso, mensagem = testar_conexao()
+
+        if sucesso:
+            st.success(mensagem)
+        else:
+            st.error(mensagem)
