@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 from conexao_supabase import conectar_supabase
 
+
 def listar_versoes():
     cliente = conectar_supabase()
     resposta = (cliente.table("icismep_versoes").select("*")
