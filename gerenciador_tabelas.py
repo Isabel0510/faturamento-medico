@@ -94,3 +94,78 @@ def cadastrar_rascunho_excel(dados, arquivo_bytes, nome_arquivo, identificacao,
     """Grava uma versão em rascunho, sem torná-la disponível à auditoria.
 
     Retorna o ID e contagens para conferência. Se ocorrer falha durante o
+    envio, o registro permanece como rascunho, nunca como publicado.
+    """
+    resumo = validar_dados_excel(dados)
+    if not isinstance(arquivo_bytes, bytes) or not arquivo_bytes:
+        raise ValueError("É necessário informar o conteúdo original do Excel.")
+    if not str(nome_arquivo).lower().endswith(".xlsx"):
+        raise ValueError("O arquivo precisa ser Excel (.xlsx).")
+    if not str(identificacao).strip():
+        raise ValueError("Informe a identificação da versão.")
+    if not isinstance(competencia_inicio, date):
+        raise ValueError("Competência deve ser uma data (primeiro dia do mês).")
+    if competencia_inicio.day != 1:
+        raise ValueError("A competência deve usar o primeiro dia do mês.")
+    if not isinstance(data_publicacao, date):
+        raise ValueError("A data da tabela deve ser uma data válida.")
+
+    cliente = conectar_supabase()
+    assinatura = hashlib.sha256(arquivo_bytes).hexdigest()
+    duplicadas = (cliente.table("icismep_versoes")
+                  .select("id,status,identificacao")
+                  .eq("hash_arquivo", assinatura).limit(1).execute()).data or []
+    if duplicadas:
+        existente = duplicadas[0]
+        raise ValueError(
+            "Este Excel já foi cadastrado no Supabase "
+            f"(versão {existente['identificacao']}, situação {existente['status']})."
+        )
+
+    versao = {
+        "identificacao": str(identificacao).strip(),
+        "competencia_inicio": competencia_inicio.isoformat(),
+        "data_publicacao": data_publicacao.isoformat(),
+        "nome_arquivo": str(nome_arquivo),
+        "formato_arquivo": "xlsx",
+        "status": "rascunho",
+        "cadastrado_por": str(cadastrado_por or "Não informado"),
+        "observacoes": str(observacoes or ""),
+        "hash_arquivo": assinatura,
+    }
+    resposta = cliente.table("icismep_versoes").insert(versao).execute()
+    if not resposta.data:
+        raise RuntimeError("O Supabase não retornou o ID da versão criada.")
+    versao_id = resposta.data[0]["id"]
+
+    registros = []
+    for _, linha in dados.iterrows():
+        municipio = str(linha["Municipio"]).strip()
+        descricao = str(linha["Descricao referencia"]).strip()
+        tipo = "" if pd.isna(linha["Tipo servico original"]) else str(linha["Tipo servico original"]).strip()
+        unidade = str(linha["Unidade referencia"]).strip()
+        secao = "" if pd.isna(linha["Secao original"]) else str(linha["Secao original"]).strip()
+        codigo = "" if "Codigo" not in dados or pd.isna(linha.get("Codigo")) else str(linha["Codigo"]).strip()
+        registros.append({
+            "versao_id": versao_id,
+            "codigo": codigo,
+            "descricao": descricao,
+            "descricao_normalizada": _normalizar(descricao),
+            "municipio": municipio,
+            "secao": secao,
+            "tipo_servico": tipo,
+            "unidade_medida": unidade,
+            "valor": str(_valor_decimal(linha["Valor oficial"])),
+        })
+
+    for inicio in range(0, len(registros), 200):
+        cliente.table("icismep_servicos").insert(registros[inicio:inicio + 200]).execute()
+
+    quantidade_salva = len(listar_servicos(versao_id))
+    if quantidade_salva != len(registros):
+        raise RuntimeError(
+            f"Rascunho {versao_id} incompleto: "
+            f"{quantidade_salva} de {len(registros)} serviços gravados. "
+            "Não publique esta versão."
+        )
+    return {"versao_id": versao_id, **resumo, "status": "rascunho"}
